@@ -1,0 +1,74 @@
+# ---- Build directories ----
+build/
+build-*/
+cmake-build-*/
+out/
+install/
+
+# ---- CMake ----
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+_deps/
+compile_commands.json
+.cmake/
+
+# ---- Compiled objects, libraries, binaries ----
+*.o
+*.obj
+*.lo
+*.slo
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+*.app
+*.d
+*.pch
+*.gch
+
+# ---- Coverage & profiling ----
+*.gcno
+*.gcda
+*.gcov
+coverage/
+*.profraw
+*.profdata
+callgrind.out.*
+perf.data*
+
+# ---- Debug info ----
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# ---- Editors / IDEs ----
+.vscode/
+.idea/
+.vs/
+*.swp
+*.swo
+*~
+.cache/
+.ccls-cache/
+.clangd/
+tags
+TAGS
+.claude/
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+
+# ---- Misc ----
+*.log
+core
+core.*

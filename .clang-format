@@ -1,0 +1,39 @@
+---
+Language: Cpp
+BasedOnStyle: Google
+
+ColumnLimit: 100
+IndentWidth: 4
+AccessModifierOffset: -4
+ContinuationIndentWidth: 4
+
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AlwaysBreakTemplateDeclarations: Yes
+BreakBeforeBraces: Attach
+FixNamespaceComments: true
+IndentCaseLabels: true
+IndentPPDirectives: None
+NamespaceIndentation: None
+PointerAlignment: Left
+DerivePointerAlignment: false
+SeparateDefinitionBlocks: Always
+SpacesBeforeTrailingComments: 2
+Standard: c++17
+
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  # Our own public headers first.
+  - Regex: '^<carafe/'
+    Priority: 1
+  # Other project headers in quotes.
+  - Regex: '^"'
+    Priority: 2
+  # Third-party headers with a slash (gtest/, etc.).
+  - Regex: '^<[[:alnum:]_]+/'
+    Priority: 4
+  # C++ / C standard library.
+  - Regex: '^<'
+    Priority: 3
