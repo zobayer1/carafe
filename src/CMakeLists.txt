@@ -8,10 +8,13 @@ configure_file(
 # Headers are listed only so IDEs show them in the project tree.
 set(CARAFE_HEADERS
     "${PROJECT_BINARY_DIR}/generated/carafe/version.hpp"
+    "${PROJECT_SOURCE_DIR}/include/carafe/http/request.hpp"
+    http/request_parser.hpp
 )
 
 set(CARAFE_SOURCES
     version.cpp
+    http/request_parser.cpp
 )
 
 add_library(carafe STATIC ${CARAFE_SOURCES} ${CARAFE_HEADERS})
@@ -25,6 +28,8 @@ target_include_directories(carafe
     PUBLIC
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/generated>
+    PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
 target_compile_features(carafe PUBLIC cxx_std_17)

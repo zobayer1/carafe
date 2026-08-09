@@ -6,7 +6,7 @@ requests, responses, and not much else.
 This is a learning project, built from the socket up rather than on top of an
 existing HTTP library. It is not production software.
 
-**Status:** scaffolding only. No server yet.
+**Status:** request line parsing and its tests. No server yet.
 
 ## Goals
 
@@ -89,24 +89,26 @@ make PRESET=release test
 
 ## Layout
 
-```
-.
-├── CMakeLists.txt        top-level build: options, global settings, subdirectories
-├── CMakePresets.json     named configure/build/test presets — the build's source of truth
-├── Makefile              convenience shortcuts; delegates to the presets
-├── cmake/
-│   ├── CompilerWarnings.cmake   the project's warning set
-│   └── Sanitizers.cmake         ASan/UBSan and gcov instrumentation
-├── include/carafe/       public headers — this is the library's API surface
-│   └── version.hpp.in    template; CMake expands it into build/<preset>/generated/
-├── src/                  implementation, plus the library target
-├── tests/                GoogleTest suite; also where GoogleTest is fetched
-├── examples/             small programs that use the library
-└── build/<preset>/       one build tree per preset (git-ignored)
-```
+The build lives at the top level — `CMakeLists.txt`, `CMakePresets.json`, the
+`Makefile`, and the modules under `cmake/`. Source is split across `include/`,
+`src/`, `tests/`, and `examples/`, and each preset builds into its own
+git-ignored `build/<preset>/`.
 
-Public headers go in `include/carafe/` and are included as
-`#include <carafe/foo.hpp>`. Anything not meant for users stays in `src/`.
+The boundary that matters is public versus internal. `include/carafe/` is the
+library's API surface: anything there is something a user of the framework may
+rely on, and it is included as `#include <carafe/foo.hpp>`. Everything else
+stays in `src/`, beside the code it serves, and is included with quotes —
+`#include "http/request_parser.hpp"`. That spelling works because `src/` is on
+the include path `PRIVATE`ly, so it resolves inside the library and nowhere
+else. Tests cross the boundary on purpose by putting `src/` on their own include
+path; nothing else does, and a header's location is the statement of whether it
+is supported.
+
+Both trees group by subsystem — `http/` today, `net/` and `routing/` later — and
+`tests/` mirrors that shape with one `*_test.cpp` per source file. Generated
+headers, currently only `version.hpp` expanded from its `.in` template, land in
+`build/<preset>/generated/carafe/` and are included exactly like hand-written
+public ones; whoever includes them cannot tell the difference.
 
 Two flag conventions are worth knowing before adding targets. Warnings are
 `PRIVATE`, so they never leak into a consumer's build and every target must ask
@@ -120,7 +122,10 @@ inherits them automatically and must *not* apply them again.
 <!-- Check these off as they land. -->
 
 - [ ] TCP listener: socket, bind, listen, accept
-- [ ] HTTP/1.1 request parsing (request line, headers, body)
+- [x] HTTP/1.1 request line parsing
+- [ ] Line splitting: scan position across reads, length cap, CRLF policy
+- [ ] HTTP/1.1 header parsing
+- [ ] Request body via Content-Length
 - [ ] Response building and serialization
 - [ ] Routing: static paths, then path parameters
 - [ ] Handler registration API
@@ -132,6 +137,85 @@ inherits them automatically and must *not* apply them again.
 ## Design notes
 
 <!-- Record decisions here as they are made, with the reasoning behind them. -->
+
+### C++17 is a choice, not a constraint
+
+The toolchain in use is far newer than the floor in the requirements table, so
+C++20 is available and unused. It would bring `std::span` for buffer handling
+and `starts_with`/`ends_with` for parsing; C++23 would bring `std::expected`.
+Staying on 17 is deliberate — writing that plumbing by hand is most of the point
+of the exercise. Revisit only if a real problem needs a feature 17 lacks, not
+for convenience.
+
+### A parsed request owns its strings
+
+`Request` holds owning `std::string` members. `std::string_view` is used heavily
+*inside* the parser for zero-copy slicing and comparison, but owned strings are
+materialized at the boundary when a field is committed.
+
+This is not the zero-copy design, and it is chosen with that in mind. Views into
+a growing connection buffer cannot be stored incrementally: the next `append`
+may reallocate and dangle every view already kept. The two ways out are to
+re-parse after each growth — which makes scanning quadratic in the number of
+chunks, and the attacker picks that number — or to store realloc-stable
+`{offset, length}` pairs and resolve them to views at the end. The second is
+correct, and it makes `Request` a bag of integers that is meaningless without
+the buffer it indexes into, with every accessor needing that buffer passed back
+in. That API burden infects handlers, the router, and anything that wants to
+keep a header past the life of the connection.
+
+Owning is not a complexity regression — it is O(n), one extra pass over bytes
+already scanned. The cost is allocation count, and small-string optimization
+absorbs most of it, since header names and methods are nearly all under the
+15-character inline threshold. Revisit once real socket buffers exist *and* a
+benchmark says the copying matters; either alone is not enough.
+
+Keeping a scan position across reads is a separate matter and not deferred with
+this. Resuming the `\r\n\r\n` search from `scanned - 3` rather than from zero is
+a hostile-input requirement, independent of who owns the bytes.
+
+### Parse failures carry a reason
+
+Parsing returns a small struct — an error enum plus the parsed value, with an
+`explicit operator bool` — rather than throwing or returning a bare
+`std::optional`. HTTP needs to know *which* failure occurred: a malformed
+request line is 400, an unknown method is 501, an unsupported version is 505,
+and `optional` discards exactly that. Exceptions were the other candidate and
+were rejected because this is a hot path fed by hostile input, where malformed
+requests are ordinary traffic rather than an exceptional condition.
+
+The error enum names semantic failures, not status codes; mapping them to
+responses belongs to the HTTP layer, so the parser stays usable by something
+that serves no responses at all. The result struct is a hand-rolled
+`std::expected` — it should be generalized into a `Result<T>` template once
+there is a second use site to shape it, and not before.
+
+### The line splitter owns the terminator
+
+`parse_request_line` receives the bytes of a line with CRLF already removed, and
+never sees or strips a terminator itself. The alternative — tolerating a trailing
+`\r` in the parser — means two components both know about terminators, and a bare
+`\n` line ending behaves differently from `\r\n` for reasons no single file explains.
+
+Stripping the terminator does not make the line free of CR and LF: a `\r` not
+followed by `\n` survives a two-byte split and lands in the target, which is a
+smuggling vector when a proxy and this server disagree about where the line ends.
+The parser therefore rejects every control byte in the line, which also costs it
+nothing to reject NUL and tab. Length capping stays with the splitter, since by
+the time the parser is called the bytes are already buffered and the memory is
+already spent.
+
+### Headers are listed, not declared as a file set
+
+`CARAFE_HEADERS` is a plain variable passed to `add_library()`, which affects
+only how IDEs display the project — compilation finds headers through include
+paths. CMake 3.23 added `FILE_SET HEADERS`, which declares them as a real target
+property and lets `install(TARGETS)` handle header installation directly. It is
+available here and deliberately unused: its payoff is in install and export
+rules, and this project has none. The day `find_package(carafe)` needs to work
+from another project, migrate to a file set and add the export rules as one
+change — they solve the same problem, and splitting them leaves the build half
+converted.
 
 ## License
 

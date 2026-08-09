@@ -21,9 +21,14 @@ include(GoogleTest)
 
 set(CARAFE_TEST_SOURCES
     version_test.cpp
+    http/request_parser_test.cpp
 )
 
 add_executable(carafe_tests ${CARAFE_TEST_SOURCES})
+
+# Tests reach into src/ deliberately: the parser is internal, so it is not in
+# include/ and does not arrive through carafe::carafe's PUBLIC include dirs.
+target_include_directories(carafe_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
 
 target_link_libraries(carafe_tests
     PRIVATE
