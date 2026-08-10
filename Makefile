@@ -1,11 +1,8 @@
-# Thin convenience wrapper around CMake presets. It holds no build knowledge of
-# its own -- every target here shells out to `cmake --preset` / `ctest --preset`,
-# so CMakePresets.json stays the single source of truth. Working without it is
-# always possible:
+# Thin wrapper around CMake presets: every target shells out to `cmake --preset`
+# or `ctest --preset`, so CMakePresets.json stays the single source of truth and
+# each preset builds into its own build/<preset>/.
 #
 #   cmake --preset debug && cmake --build --preset debug && ctest --preset debug
-#
-# Every preset builds into build/<preset>/, so the trees never collide.
 
 PRESET ?= debug
 JOBS   ?= $(shell nproc 2>/dev/null || echo 4)
@@ -68,8 +65,8 @@ format: ## Reformat all sources in place with clang-format
 format-check: ## Fail if any source is not clang-format clean
 	@echo "$(CXX_FILES)" | tr ' ' '\n' | grep . | xargs -r clang-format --dry-run --Werror
 
-# The positional argument is a regex matched against paths in the compilation
-# database; anchoring it to $(CURDIR) keeps clang-tidy off _deps/ sources.
+# The regex matches paths in the compilation database; anchoring it to $(CURDIR)
+# keeps clang-tidy off _deps/ sources.
 tidy: build ## Run clang-tidy over the project sources
 	@command -v run-clang-tidy >/dev/null 2>&1 \
 		&& run-clang-tidy -p $(BUILD_DIR) -quiet '^$(CURDIR)/(src|tests|examples)/' \

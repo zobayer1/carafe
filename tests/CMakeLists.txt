@@ -1,8 +1,7 @@
 include(FetchContent)
 
-# Use a system-installed GoogleTest if one is present (find_package(GTest)),
-# otherwise download and build the pinned release. FIND_PACKAGE_ARGS needs
-# CMake >= 3.24.
+# Prefer a system GoogleTest, otherwise fetch the pinned release.
+# FIND_PACKAGE_ARGS needs CMake >= 3.24.
 FetchContent_Declare(
     googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
@@ -20,14 +19,15 @@ FetchContent_MakeAvailable(googletest)
 include(GoogleTest)
 
 set(CARAFE_TEST_SOURCES
-    version_test.cpp
+    http/line_reader_test.cpp
     http/request_parser_test.cpp
+    version_test.cpp
 )
 
 add_executable(carafe_tests ${CARAFE_TEST_SOURCES})
 
-# Tests reach into src/ deliberately: the parser is internal, so it is not in
-# include/ and does not arrive through carafe::carafe's PUBLIC include dirs.
+# Tests reach into src/ deliberately: internal headers are not in include/ and
+# do not arrive through carafe::carafe's PUBLIC include dirs.
 target_include_directories(carafe_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
 
 target_link_libraries(carafe_tests
@@ -38,9 +38,8 @@ target_link_libraries(carafe_tests
         GTest::gtest_main
 )
 
-# Only warnings: they are PRIVATE on each target and do not propagate. The
-# sanitizer and coverage flags arrive through carafe::carafe, which carries
-# them PUBLICly -- applying them again here would just duplicate the flags.
+# Warnings only: sanitizer and coverage flags already arrive PUBLICly through
+# carafe::carafe, and applying them again would just duplicate the flags.
 carafe_target_warnings(carafe_tests)
 
 # Register every TEST() with CTest so `ctest` reports them individually.

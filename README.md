@@ -6,7 +6,7 @@ requests, responses, and not much else.
 This is a learning project, built from the socket up rather than on top of an
 existing HTTP library. It is not production software.
 
-**Status:** request line parsing and its tests. No server yet.
+**Status:** line splitting and request line parsing, with their tests. No server yet.
 
 ## Goals
 
@@ -123,7 +123,7 @@ inherits them automatically and must *not* apply them again.
 
 - [ ] TCP listener: socket, bind, listen, accept
 - [x] HTTP/1.1 request line parsing
-- [ ] Line splitting: scan position across reads, length cap, CRLF policy
+- [x] Line splitting: scan position across reads, length cap, CRLF policy
 - [ ] HTTP/1.1 header parsing
 - [ ] Request body via Content-Length
 - [ ] Response building and serialization
