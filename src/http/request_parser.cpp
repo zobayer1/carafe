@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cctype>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -12,7 +13,7 @@ namespace carafe::http {
 namespace {
 
 // Maps a method token to Method; nullopt means we do not implement that verb.
-std::optional<Method> lookup_method(std::string_view token) noexcept {
+[[nodiscard]] std::optional<Method> lookup_method(std::string_view token) noexcept {
     static constexpr std::array<std::pair<std::string_view, Method>, 9> table{
         {{"GET", Method::Get},
          {"HEAD", Method::Head},
@@ -34,10 +35,10 @@ std::optional<Method> lookup_method(std::string_view token) noexcept {
 
 // Shape before value: a table alone cannot tell "not a version" (400) from "a
 // version we do not speak" (505).
-ParseError parse_version(std::string_view token, Version& out) noexcept {
+[[nodiscard]] ParseError parse_version(std::string_view token, Version& out) noexcept {
     if (token.size() != 8 || token.substr(0, 5) != "HTTP/" || token[6] != '.' ||
-        !std::isdigit(static_cast<unsigned char>(token[5])) ||
-        !std::isdigit(static_cast<unsigned char>(token[7]))) {
+        std::isdigit(static_cast<unsigned char>(token[5])) == 0 ||
+        std::isdigit(static_cast<unsigned char>(token[7])) == 0) {
         return ParseError::Malformed;
     }
 
@@ -67,6 +68,45 @@ ParseError parse_version(std::string_view token, Version& out) noexcept {
     return false;
 }
 
+// RFC 9110 §5.6.2: tchar = ALPHA / DIGIT / "!" / "#" / "$" / "%" / "&" /
+// "'" / "*" / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~"
+[[nodiscard]] constexpr bool is_tchar(unsigned char ch) noexcept {
+    if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) {
+        return true;
+    }
+    switch (ch) {
+        case '!':
+        case '#':
+        case '$':
+        case '%':
+        case '&':
+        case '\'':
+        case '*':
+        case '+':
+        case '-':
+        case '.':
+        case '^':
+        case '_':
+        case '`':
+        case '|':
+        case '~':
+            return true;
+        default:
+            return false;
+    }
+}
+
+// RFC 9110 §5.6.3: OWS = *( SP / HTAB )
+[[nodiscard]] constexpr bool is_ows(unsigned char ch) noexcept {
+    return ch == ' ' || ch == '\t';
+}
+
+// RFC 9110 §5.5: field-vchar = VCHAR / obs-text, with SP and HTAB between them.
+// An allowlist, so a control byte nobody thought to name still fails.
+[[nodiscard]] constexpr bool is_valid_value_char(unsigned char ch) noexcept {
+    return ch == '\t' || (ch >= 0x20 && ch != 0x7F);
+}
+
 }  // namespace
 
 // Validates entirely on views; the one allocation happens only once the line is
@@ -92,9 +132,9 @@ RequestLineResult parse_request_line(std::string_view line) {
         return {ParseError::Malformed, {}};
     }
 
-    std::string_view method_part = line.substr(0, sp1);
-    std::string_view target_part = line.substr(sp1 + 1, sp2 - sp1 - 1);
-    std::string_view version_part = line.substr(sp2 + 1);
+    const std::string_view method_part = line.substr(0, sp1);
+    const std::string_view target_part = line.substr(sp1 + 1, sp2 - sp1 - 1);
+    const std::string_view version_part = line.substr(sp2 + 1);
 
     if (method_part.empty() || target_part.empty() || version_part.empty()) {
         return {ParseError::Malformed, {}};
@@ -112,6 +152,60 @@ RequestLineResult parse_request_line(std::string_view line) {
     }
 
     return {ParseError::None, RequestLine{*method_opt, std::string{target_part}, version}};
+}
+
+// Parses "field-name ':' OWS field-value OWS". `line` must arrive with its
+// CRLF removed and length-capped by the caller; capping here would be too late.
+std::optional<HeaderField> parse_header_field(std::string_view line) {
+    // A colon is ordinary content in a value, so only the first one splits.
+    const auto colon_pos = line.find(':');
+    if (colon_pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    const std::string_view name_part = line.substr(0, colon_pos);
+    if (name_part.empty()) {
+        return std::nullopt;
+    }
+
+    std::string lower_name;
+    lower_name.reserve(name_part.size());
+
+    for (const char ch : name_part) {
+        const auto u_ch = static_cast<unsigned char>(ch);
+        if (!is_tchar(u_ch)) {
+            return std::nullopt;
+        }
+        // Hand-rolled because std::tolower is locale-dependent: in a Turkish
+        // locale 'I' does not lower to 'i'.
+        if (u_ch >= 'A' && u_ch <= 'Z') {
+            lower_name.push_back(static_cast<char>(u_ch + ('a' - 'A')));
+        } else {
+            lower_name.push_back(ch);
+        }
+    }
+
+    const std::string_view value_part = line.substr(colon_pos + 1);
+
+    // OWS is optional on both sides, and `end > start` keeps an all-OWS value
+    // from walking the second scan off the front.
+    std::size_t start = 0;
+    while (start < value_part.size() && is_ows(static_cast<unsigned char>(value_part[start]))) {
+        ++start;
+    }
+    std::size_t end = value_part.size();
+    while (end > start && is_ows(static_cast<unsigned char>(value_part[end - 1]))) {
+        --end;
+    }
+
+    // Over the untrimmed span: the bytes being discarded still have to be legal.
+    for (const char ch : value_part) {
+        if (!is_valid_value_char(static_cast<unsigned char>(ch))) {
+            return std::nullopt;
+        }
+    }
+
+    return HeaderField{std::move(lower_name), std::string{value_part.substr(start, end - start)}};
 }
 
 }  // namespace carafe::http

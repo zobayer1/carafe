@@ -1,0 +1,6 @@
+---
+# Inherits the root config; these two fire only on constructs gtest requires.
+InheritParentConfig: true
+Checks: >
+  -bugprone-unchecked-optional-access,
+  -misc-use-internal-linkage

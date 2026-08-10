@@ -33,6 +33,10 @@ option(CARAFE_ENABLE_COVERAGE    "Enable gcov coverage instrumentation" OFF)
 # ---------------------------------------------------------------------------
 # Global build settings
 # ---------------------------------------------------------------------------
+# Pins the dialect. target_compile_features(cxx_std_17) is only a floor, so a
+# compiler defaulting to a later standard would silently accept its features.
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)            # -std=c++17, never -std=gnu++17
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)    # for clangd / clang-tidy
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)

@@ -12,15 +12,19 @@ Checks: >
   performance-*,
   portability-*,
   readability-*,
+  -bugprone-easily-swappable-parameters,
   -cppcoreguidelines-avoid-magic-numbers,
   -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
   -cppcoreguidelines-pro-type-vararg,
   -misc-include-cleaner,
   -misc-non-private-member-variables-in-classes,
   -modernize-use-trailing-return-type,
+  -performance-enum-size,
   -portability-avoid-pragma-once,
   -readability-identifier-length,
-  -readability-magic-numbers
+  -readability-magic-numbers,
+  -readability-use-anyofallof
 
 WarningsAsErrors: ''
 HeaderFilterRegex: '.*/(include|generated)/carafe/.*'
@@ -31,6 +35,7 @@ CheckOptions:
   readability-identifier-naming.ClassCase: CamelCase
   readability-identifier-naming.StructCase: CamelCase
   readability-identifier-naming.EnumCase: CamelCase
+  readability-identifier-naming.EnumConstantCase: CamelCase
   readability-identifier-naming.FunctionCase: lower_case
   readability-identifier-naming.VariableCase: lower_case
   readability-identifier-naming.ParameterCase: lower_case

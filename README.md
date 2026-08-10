@@ -6,7 +6,8 @@ requests, responses, and not much else.
 This is a learning project, built from the socket up rather than on top of an
 existing HTTP library. It is not production software.
 
-**Status:** line splitting and request line parsing, with their tests. No server yet.
+**Status:** line splitting, request line and header field parsing, with their
+tests. No server yet.
 
 ## Goals
 
@@ -124,7 +125,8 @@ inherits them automatically and must *not* apply them again.
 - [ ] TCP listener: socket, bind, listen, accept
 - [x] HTTP/1.1 request line parsing
 - [x] Line splitting: scan position across reads, length cap, CRLF policy
-- [ ] HTTP/1.1 header parsing
+- [x] Header field parsing: token names, OWS, obs-fold and CTL rejection
+- [ ] Header block assembly: duplicates, Host, total-head limit
 - [ ] Request body via Content-Length
 - [ ] Response building and serialization
 - [ ] Routing: static paths, then path parameters
@@ -190,6 +192,14 @@ that serves no responses at all. The result struct is a hand-rolled
 `std::expected` — it should be generalized into a `Result<T>` template once
 there is a second use site to shape it, and not before.
 
+The rule is conditional on there being more than one failure to tell apart.
+`parse_header_field` has exactly one — a malformed field is 400 and nothing
+else — so it returns a bare `std::optional` and inventing an error enum for it
+would add a state no code path can produce. `LineReader` went the other way for
+the opposite reason: it needed a *third* state, since "no line yet" is not a
+failure. Each layer's return type is counted from its own states rather than
+copied from its neighbour.
+
 ### The line splitter owns the terminator
 
 `parse_request_line` receives the bytes of a line with CRLF already removed, and
@@ -204,6 +214,22 @@ The parser therefore rejects every control byte in the line, which also costs it
 nothing to reject NUL and tab. Length capping stays with the splitter, since by
 the time the parser is called the bytes are already buffered and the memory is
 already spent.
+
+### Field names are normalized, field values are not
+
+Header field names are case-insensitive, so `parse_header_field` lowercases them
+once at parse time rather than leaving every lookup to compare case-insensitively.
+It also makes the wire format and the in-memory format agree with HTTP/2, which
+mandates lowercase names outright. Values are left exactly as received: casing
+carries meaning in base64 credentials, entity tags, and URLs, and a parser that
+folds it is corrupting data rather than normalizing it.
+
+Both the name and the value are validated against allowlists taken from the
+grammar — `tchar` for names, `field-vchar` plus SP and HTAB for values — rather
+than against a list of forbidden bytes. A denylist over an open set is a hole by
+construction: an earlier version named CR, LF, and DEL, and let NUL through into
+a value, which is a truncation vector the moment that string meets a C API. An
+allowlist fails closed on the byte nobody thought of.
 
 ### Headers are listed, not declared as a file set
 

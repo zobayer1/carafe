@@ -14,4 +14,9 @@ struct RequestLine {
     Version version{};
 };
 
+struct HeaderField {
+    std::string name;   // lowercased
+    std::string value;  // OWS-trimmed
+};
+
 }  // namespace carafe::http
