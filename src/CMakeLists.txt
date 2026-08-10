@@ -8,12 +8,15 @@ configure_file(
 # Headers are listed only so IDEs show them in the project tree.
 set(CARAFE_HEADERS
     "${PROJECT_BINARY_DIR}/generated/carafe/version.hpp"
+    "${PROJECT_SOURCE_DIR}/include/carafe/http/headers.hpp"
     "${PROJECT_SOURCE_DIR}/include/carafe/http/request.hpp"
+    http/ascii.hpp
     http/line_reader.hpp
     http/request_parser.hpp
 )
 
 set(CARAFE_SOURCES
+    http/headers.cpp
     http/line_reader.cpp
     http/request_parser.cpp
     version.cpp

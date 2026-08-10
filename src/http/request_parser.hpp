@@ -1,5 +1,6 @@
 #pragma once
 
+#include <carafe/http/headers.hpp>
 #include <carafe/http/request.hpp>
 
 #include <optional>

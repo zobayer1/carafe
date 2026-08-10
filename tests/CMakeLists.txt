@@ -19,6 +19,7 @@ FetchContent_MakeAvailable(googletest)
 include(GoogleTest)
 
 set(CARAFE_TEST_SOURCES
+    http/headers_test.cpp
     http/line_reader_test.cpp
     http/request_parser_test.cpp
     version_test.cpp

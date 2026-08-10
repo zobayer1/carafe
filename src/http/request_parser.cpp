@@ -1,5 +1,7 @@
 #include "http/request_parser.hpp"
 
+#include "http/ascii.hpp"
+
 #include <array>
 #include <cctype>
 #include <cstddef>
@@ -176,13 +178,7 @@ std::optional<HeaderField> parse_header_field(std::string_view line) {
         if (!is_tchar(u_ch)) {
             return std::nullopt;
         }
-        // Hand-rolled because std::tolower is locale-dependent: in a Turkish
-        // locale 'I' does not lower to 'i'.
-        if (u_ch >= 'A' && u_ch <= 'Z') {
-            lower_name.push_back(static_cast<char>(u_ch + ('a' - 'A')));
-        } else {
-            lower_name.push_back(ch);
-        }
+        lower_name.push_back(ascii_lower(ch));
     }
 
     const std::string_view value_part = line.substr(colon_pos + 1);
