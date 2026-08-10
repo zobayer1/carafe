@@ -1,62 +1,10 @@
 #include "http/request_parser.hpp"
 
-#include <ostream>
+#include "http/printers.hpp"
+
 #include <string_view>
 
 #include <gtest/gtest.h>
-
-// In carafe::http, not an anonymous namespace: gtest finds these by ADL.
-namespace carafe::http {
-
-std::ostream& operator<<(std::ostream& os, Method method) {
-    switch (method) {
-        case Method::Get:
-            return os << "Get";
-        case Method::Head:
-            return os << "Head";
-        case Method::Post:
-            return os << "Post";
-        case Method::Put:
-            return os << "Put";
-        case Method::Delete:
-            return os << "Delete";
-        case Method::Connect:
-            return os << "Connect";
-        case Method::Options:
-            return os << "Options";
-        case Method::Trace:
-            return os << "Trace";
-        case Method::Patch:
-            return os << "Patch";
-    }
-    return os << "Method(" << static_cast<int>(method) << ")";
-}
-
-std::ostream& operator<<(std::ostream& os, Version version) {
-    switch (version) {
-        case Version::Http10:
-            return os << "HTTP/1.0";
-        case Version::Http11:
-            return os << "HTTP/1.1";
-    }
-    return os << "Version(" << static_cast<int>(version) << ")";
-}
-
-std::ostream& operator<<(std::ostream& os, ParseError error) {
-    switch (error) {
-        case ParseError::None:
-            return os << "None";
-        case ParseError::Malformed:
-            return os << "Malformed";
-        case ParseError::UnknownMethod:
-            return os << "UnknownMethod";
-        case ParseError::UnsupportedVersion:
-            return os << "UnsupportedVersion";
-    }
-    return os << "ParseError(" << static_cast<int>(error) << ")";
-}
-
-}  // namespace carafe::http
 
 namespace {
 

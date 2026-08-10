@@ -13,12 +13,14 @@ set(CARAFE_HEADERS
     http/ascii.hpp
     http/line_reader.hpp
     http/request_parser.hpp
+    http/request_reader.hpp
 )
 
 set(CARAFE_SOURCES
     http/headers.cpp
     http/line_reader.cpp
     http/request_parser.cpp
+    http/request_reader.cpp
     version.cpp
 )
 

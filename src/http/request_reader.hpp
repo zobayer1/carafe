@@ -1,0 +1,66 @@
+#pragma once
+
+#include <carafe/http/request.hpp>
+
+#include "http/line_reader.hpp"
+
+#include <cstddef>
+#include <optional>
+#include <string_view>
+
+namespace carafe::http {
+
+// Each value maps to one status, but the mapping is many to one.
+enum class RequestError {
+    None,
+    Malformed,           // 400
+    UnknownMethod,       // 501
+    UnsupportedVersion,  // 505
+    RequestLineTooLong,  // 414
+    HeaderTooLong,       // 431
+    TooManyHeaders,      // 431
+    HeadTooLarge,        // 431
+};
+
+// Three states, like LineResult: nothing yet, a request, or a failure.
+struct RequestResult {
+    RequestError error = RequestError::None;
+    std::optional<Request> request;
+
+    [[nodiscard]] explicit operator bool() const noexcept {
+        return error == RequestError::None;
+    }
+};
+
+// Turns a byte stream into successive request heads. One per connection, not
+// one per request: completion arms the next, so a pipelined stream just works.
+class RequestReader {
+public:
+    void append(std::string_view bytes);
+
+    // Drains every line available, so a caller does not loop. Unlike
+    // LineReader, nothing here is a view: a Request owns all of its strings.
+    [[nodiscard]] RequestResult next_request();
+
+private:
+    enum class Phase { RequestLine, Headers };
+
+    // Records the failure so it survives to every later call, then reports it.
+    [[nodiscard]] RequestResult fail(RequestError error);
+
+    // Engaged means "hand this to the caller"; empty means "read another line".
+    [[nodiscard]] std::optional<RequestResult> handle_request_line(std::string_view line);
+    [[nodiscard]] std::optional<RequestResult> handle_field_line(std::string_view line);
+
+    // Validates the assembled head, hands it over, and arms the next request.
+    [[nodiscard]] RequestResult complete_head();
+
+    Phase phase_ = Phase::RequestLine;
+    LineReader line_reader_;
+    Request request_;
+    RequestError failure_ = RequestError::None;
+    std::size_t head_bytes_ = 0;
+    std::size_t field_count_ = 0;
+};
+
+}  // namespace carafe::http

@@ -1,27 +1,13 @@
 #include "http/line_reader.hpp"
 
+#include "http/printers.hpp"
+
 #include <cstddef>
-#include <ostream>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include <gtest/gtest.h>
-
-namespace carafe::http {
-
-// Found by ADL, so it must live here: without it gtest prints an integer.
-std::ostream& operator<<(std::ostream& os, LineError error) {
-    switch (error) {
-        case LineError::None:
-            return os << "None";
-        case LineError::LineTooLong:
-            return os << "LineTooLong";
-    }
-    return os << "LineError(" << static_cast<int>(error) << ")";
-}
-
-}  // namespace carafe::http
 
 namespace {
 

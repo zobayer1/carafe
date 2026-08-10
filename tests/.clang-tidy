@@ -1,6 +1,6 @@
 ---
-# Inherits the root config; these two fire only on constructs gtest requires.
+# Inherits the root config. gtest's ASSERT_TRUE is not modelled as a check, so
+# every later dereference of a verified optional reads as unchecked.
 InheritParentConfig: true
 Checks: >
-  -bugprone-unchecked-optional-access,
-  -misc-use-internal-linkage
+  -bugprone-unchecked-optional-access

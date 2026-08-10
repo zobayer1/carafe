@@ -22,14 +22,20 @@ set(CARAFE_TEST_SOURCES
     http/headers_test.cpp
     http/line_reader_test.cpp
     http/request_parser_test.cpp
+    http/request_reader_test.cpp
     version_test.cpp
 )
 
 add_executable(carafe_tests ${CARAFE_TEST_SOURCES})
 
 # Tests reach into src/ deliberately: internal headers are not in include/ and
-# do not arrive through carafe::carafe's PUBLIC include dirs.
-target_include_directories(carafe_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+# do not arrive through carafe::carafe's PUBLIC include dirs. tests/ is on the
+# path too, so shared test-only headers are spelled the same way.
+target_include_directories(carafe_tests
+    PRIVATE
+        "${PROJECT_SOURCE_DIR}/src"
+        "${PROJECT_SOURCE_DIR}/tests"
+)
 
 target_link_libraries(carafe_tests
     PRIVATE

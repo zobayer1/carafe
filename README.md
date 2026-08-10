@@ -6,8 +6,8 @@ requests, responses, and not much else.
 This is a learning project, built from the socket up rather than on top of an
 existing HTTP library. It is not production software.
 
-**Status:** line splitting, request line and header field parsing, with their
-tests. No server yet.
+**Status:** a complete request head parser — bytes in, a `Request` out — with
+its tests. No socket yet, and no body.
 
 ## Goals
 
@@ -126,7 +126,7 @@ inherits them automatically and must *not* apply them again.
 - [x] HTTP/1.1 request line parsing
 - [x] Line splitting: scan position across reads, length cap, CRLF policy
 - [x] Header field parsing: token names, OWS, obs-fold and CTL rejection
-- [ ] Header block assembly: duplicates, Host, total-head limit
+- [x] Header block assembly: duplicates, Host, total-head limit
 - [ ] Request body via Content-Length
 - [ ] Response building and serialization
 - [ ] Routing: static paths, then path parameters
@@ -230,6 +230,45 @@ than against a list of forbidden bytes. A denylist over an open set is a hole by
 construction: an earlier version named CR, LF, and DEL, and let NUL through into
 a value, which is a truncation vector the moment that string meets a C API. An
 allowlist fails closed on the byte nobody thought of.
+
+### `Headers` is a container, not a rulebook
+
+`Headers` stores fields in arrival order and answers questions about them —
+`get`, `contains`, `count`. It does not enforce HTTP's rules about *particular*
+fields: it will happily hold two `Host` values, because rejecting them requires
+knowing that `Host` is special, and a type that knows that is a type a response
+cannot reuse.
+
+So the policy lives one layer up, in `RequestReader`, which knows it is reading a
+request and can therefore apply request rules — exactly one `Host` on HTTP/1.1,
+none required on 1.0. `count()` exists for that caller rather than for
+convenience. It is the same split that keeps `LineReader` from knowing whether a
+line is a request line or a field, and `parse_header_field` from knowing which
+field it just parsed.
+
+A vector rather than a map, for three reasons that all point the same way: field
+order is observable when reserialising, repeated fields are legal and a map
+forbids them, and a linear scan wins at the sizes a bounded request head can
+reach.
+
+### One LineError, two statuses
+
+`LineReader` reports `LineTooLong` without knowing what the line was for. That
+single failure is a 414 if the line was the request line and a 431 if it was a
+field — and only `RequestReader`, which tracks which phase it is in, can tell
+them apart. Resolving that ambiguity is the clearest single reason the assembler
+exists as its own layer rather than as a loop inside the caller.
+
+The same shape recurs downward. `parse_header_field` returns a bare
+`std::optional` because a malformed field is 400 and nothing else, and
+`RequestReader` widens it into the error enum that also carries the two
+too-long cases and the two head limits. Each layer names the failures it can
+actually distinguish, and the layer above supplies the context to split them
+further.
+
+The head limits are `RequestReader`'s alone, for the same reason: a per-line cap
+bounds one field, but nothing below this layer knows how many fields have
+accumulated, or that 50,000 individually legal ones are not a legal head.
 
 ### Headers are listed, not declared as a file set
 
