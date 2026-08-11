@@ -14,6 +14,7 @@ set(CARAFE_HEADERS
     http/line_reader.hpp
     http/request_parser.hpp
     http/request_reader.hpp
+    net/socket.hpp
 )
 
 set(CARAFE_SOURCES
@@ -21,6 +22,7 @@ set(CARAFE_SOURCES
     http/line_reader.cpp
     http/request_parser.cpp
     http/request_reader.cpp
+    net/socket.cpp
     version.cpp
 )
 

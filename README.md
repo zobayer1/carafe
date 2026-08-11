@@ -6,8 +6,9 @@ requests, responses, and not much else.
 This is a learning project, built from the socket up rather than on top of an
 existing HTTP library. It is not production software.
 
-**Status:** a complete request head parser — bytes in, a `Request` out — with
-its tests. No socket yet, and no body.
+**Status:** a complete request head parser — bytes in, a `Request` out — and an
+RAII owner for a file descriptor. Nothing binds, listens or accepts yet, and
+there is no body.
 
 ## Goals
 
@@ -122,6 +123,7 @@ inherits them automatically and must *not* apply them again.
 
 <!-- Check these off as they land. -->
 
+- [x] Descriptor ownership: a move-only `Socket` that closes exactly once
 - [ ] TCP listener: socket, bind, listen, accept
 - [x] HTTP/1.1 request line parsing
 - [x] Line splitting: scan position across reads, length cap, CRLF policy
@@ -281,6 +283,33 @@ rules, and this project has none. The day `find_package(carafe)` needs to work
 from another project, migrate to a file set and add the export rules as one
 change — they solve the same problem, and splitting them leaves the build half
 converted.
+
+### One descriptor, one owner
+
+`Socket` holds a file descriptor and closes it exactly once. It is move-only
+rather than copyable, because a copy means two owners and two closes, and the
+second close lands on whatever descriptor the kernel handed out in the meantime.
+That surfaces as traffic on the wrong connection rather than as a crash. Moving
+is the only way to pass one around, so "who closes this" has a single answer at
+every instant, and still will once connections are handed to threads.
+
+The moved-from state is specified rather than merely valid: it holds
+`invalid_fd` and owns nothing. The standard library promises only "valid but
+unspecified" for its own types, which is enough for a container and not enough
+here — a moved-from `Socket` is still destroyed, and its destructor must not
+close a descriptor that now belongs to someone else. The tests assert that state
+directly for exactly this reason.
+
+Closing is never retried on `EINTR`. POSIX leaves the descriptor's fate
+unspecified, but Linux releases it whether or not `close()` reports an error, so
+a retry closes whatever another thread has since opened into the slot — the
+double close the move semantics exist to prevent, reintroduced by the error
+handling.
+
+`get()` is present because the tests need it: asserting that the destructor
+closed a descriptor requires knowing which one. `release()`, an early `close()`,
+and a default constructor are absent for the same rule read the other way —
+nothing calls them yet, and `Listener` will shape them better than a guess.
 
 ## License
 

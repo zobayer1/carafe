@@ -23,6 +23,7 @@ set(CARAFE_TEST_SOURCES
     http/line_reader_test.cpp
     http/request_parser_test.cpp
     http/request_reader_test.cpp
+    net/socket_test.cpp
     version_test.cpp
 )
 
