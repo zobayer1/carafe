@@ -18,16 +18,23 @@ FetchContent_MakeAvailable(googletest)
 
 include(GoogleTest)
 
+# Headers are listed only so IDEs show them in the project tree.
+set(CARAFE_TEST_HEADERS
+    http/printers.hpp
+    net/printers.hpp
+)
+
 set(CARAFE_TEST_SOURCES
     http/headers_test.cpp
     http/line_reader_test.cpp
     http/request_parser_test.cpp
     http/request_reader_test.cpp
+    net/listener_test.cpp
     net/socket_test.cpp
     version_test.cpp
 )
 
-add_executable(carafe_tests ${CARAFE_TEST_SOURCES})
+add_executable(carafe_tests ${CARAFE_TEST_SOURCES} ${CARAFE_TEST_HEADERS})
 
 # Tests reach into src/ deliberately: internal headers are not in include/ and
 # do not arrive through carafe::carafe's PUBLIC include dirs. tests/ is on the
