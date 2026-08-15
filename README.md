@@ -7,8 +7,8 @@ This is a learning project, built from the socket up rather than on top of an
 existing HTTP library. It is not production software.
 
 **Status:** a complete request head parser — bytes in, a `Request` out — and a
-socket that binds and listens. Nothing accepts a connection yet, and there is no
-body.
+socket that binds, listens, and hands back one connection at a time. Nothing
+reads a request off the wire yet, and there is no body.
 
 ## Goals
 
@@ -125,7 +125,7 @@ inherits them automatically and must *not* apply them again.
 
 - [x] Descriptor ownership: a move-only `Socket` that closes exactly once
 - [x] TCP listener: socket, bind and listen, on a port the kernel may choose
-- [ ] Accepting connections: `accept()`, one `Socket` per client
+- [x] Accepting connections: `accept()`, one `Socket` per client
 - [x] HTTP/1.1 request line parsing
 - [x] Line splitting: scan position across reads, length cap, CRLF policy
 - [x] Header field parsing: token names, OWS, obs-fold and CTL rejection

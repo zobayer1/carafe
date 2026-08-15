@@ -8,14 +8,15 @@
 
 namespace carafe::net {
 
-// One value per syscall that can fail. Which call failed is all this says;
-// os_error says why.
-enum class ListenError {
-    None,
-    SocketFailed,
-    BindFailed,
-    AddressFailed,
-    ListenFailed,
+// Result of accept() on a listening socket. The client socket is optional because
+// accept() can fail, and the os_error is the errno at that failure.
+struct AcceptResult {
+    int os_error = 0;
+    std::optional<Socket> client;
+
+    [[nodiscard]] explicit operator bool() const noexcept {
+        return client.has_value();
+    }
 };
 
 // A socket already listening, and the port it is bound to. The port is a member
@@ -28,9 +29,21 @@ public:
         return port_;
     }
 
+    [[nodiscard]] AcceptResult accept();
+
 private:
     Socket socket_;
     std::uint16_t port_ = 0;
+};
+
+// One value per syscall that can fail. Which call failed is all this says;
+// os_error says why.
+enum class ListenError {
+    None,
+    SocketFailed,
+    BindFailed,
+    AddressFailed,
+    ListenFailed,
 };
 
 // Two states, unlike RequestResult: a listener, or the reason there is none.

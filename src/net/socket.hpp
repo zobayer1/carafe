@@ -3,7 +3,7 @@
 namespace carafe::net {
 
 // Sole owner of one file descriptor, closed exactly once when the Socket dies.
-// An empty Socket holds invalid_fd and owns nothing.
+// An empty Socket holds -1 and owns nothing.
 class Socket {
 public:
     // -1 is accepted: a failed accept() has no descriptor to give.
@@ -25,13 +25,12 @@ public:
     }
 
     [[nodiscard]] bool valid() const noexcept {
-        return fd_ != invalid_fd;
+        return fd_ != -1;
     }
 
 private:
-    static constexpr int invalid_fd = -1;
-
-    int fd_ = invalid_fd;
+    // The file descriptor owned by this Socket. -1 means invalid socket.
+    int fd_ = -1;
 };
 
 }  // namespace carafe::net

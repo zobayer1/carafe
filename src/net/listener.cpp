@@ -11,6 +11,23 @@
 
 namespace carafe::net {
 
+AcceptResult Listener::accept() {
+    while (true) {
+        // accept4, not accept: flags are not inherited, so a plain accept() would hand
+        // back a client without CLOEXEC however the listener was made.
+        const int client_fd = ::accept4(socket_.get(), nullptr, nullptr, SOCK_CLOEXEC);
+
+        if (client_fd != -1) {
+            return {0, Socket(client_fd)};
+        }
+
+        // A signal arriving mid-wait is not an outcome, just an interruption: ask again.
+        if (errno != EINTR) {
+            return {errno, std::nullopt};
+        }
+    }
+}
+
 ListenResult listen_on(std::uint16_t port) {
     // CLOEXEC in the type argument, not fcntl afterwards: nothing a concurrent
     // fork can copy in between.

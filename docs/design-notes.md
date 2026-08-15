@@ -214,9 +214,60 @@ anything wider, which is the safer default and the thing to revisit when the hos
 argument arrives.
 
 Two behaviours here are recorded as untested rather than quietly assumed.
-`SO_REUSEADDR` cannot be tested until `accept()` exists, because TIME_WAIT is a
-property of accepted connections and a destroyed listener frees its port either
-way; `SOCK_CLOEXEC` would need a fork-and-exec probe. The three error returns are
-likewise left uncovered rather than marked excluded from coverage: they are
-untested, not unreachable, and an exclusion marker would turn a true signal into
-a fake 100%.
+`SO_REUSEADDR` needs a socket in TIME_WAIT to bind over, which is a property of
+accepted connections rather than of listeners, so the test only became writable
+once `accept()` existed; it is scheduled for the commit that adds the `Listener`
+accessors. `SOCK_CLOEXEC` on the listening socket is one `fcntl(F_GETFD)` away,
+but nothing exposes that descriptor to ask — the accepted socket is checked that
+way already. The three error returns are likewise left uncovered rather than
+marked excluded from coverage: they are untested, not unreachable, and an
+exclusion marker would turn a true signal into a fake 100%.
+
+## A signal is not an outcome
+
+`accept()` is a member where `listen_on` is a free function, and the reversal is
+not an inconsistency. What forced `listen_on` out of the class was that its
+result type *contains* a `Listener`; `AcceptResult` contains a `Socket`, so no
+type names one that names it back and the header still reads top to bottom.
+Meanwhile `accept` needs the descriptor only `Listener` owns, and a free function
+could reach it only by exposing the fd — which is the one thing `Socket` exists
+to prevent.
+
+There is no `AcceptError` to match `ListenError`. That enum earns its place by
+saying which of four syscalls failed, a question `errno` cannot answer; here
+there is one call, so `errno` is the whole story and an enum with a single
+meaningful value would be ceremony. A real classification does exist —
+`ECONNABORTED` means drop this connection and keep serving, `EMFILE` means back
+off, `EBADF` means the listener itself is finished — but that is a policy, and
+its only caller is an accept loop that has not been written. It gets named here
+and deferred, the same way `release()` was left off `Socket`.
+
+`accept4` rather than `accept`, because descriptor flags are not inherited across
+an accept: the connected socket arrives without `SOCK_CLOEXEC` even though the
+listening socket has it. Plain `accept` would quietly undo the care taken one
+function earlier.
+
+`EINTR` is retried inside the function, and the retry is not bounded. The
+temptation to cap it comes from reading the loop as error handling, which it is
+not — nothing failed. The thread was parked in the kernel waiting for a
+connection, a signal arrived, and the kernel returned early so a handler could
+run. Continuing re-enters the same wait. A trial limit exists to stop a loop
+from spinning hot on a cheap failing call; every iteration here blocks, consumes
+nothing, and turns over only as fast as signals arrive.
+
+Nor would a limit buy anything. After N interruptions the function would hand
+back `EINTR` to a caller who asked for a connection and has not got one, so the
+caller loops — the same unbounded loop moved up a level, plus an error value
+meaning "ask again", which is precisely what the loop was already doing. The
+pathological case, a repeating `SIGALRM` whose handler was installed without
+`SA_RESTART`, does starve `accept`, and a cap does not fix that either; the fix
+is `SA_RESTART` or a blocked signal mask, and that is the program's business
+rather than this function's.
+
+What this gives up is worth stating plainly: swallowing every `EINTR` means a
+signal can no longer break a thread out of a blocking `accept`, which is one
+classical way to shut a server down. The trade is accepted because the better
+lever is to `shutdown()` or close the listening descriptor, which makes `accept`
+return `EINVAL` or `EBADF` — reported through `os_error` rather than swallowed.
+The blocking behaviour itself is deliberate for now; non-blocking accept is a
+question for the concurrency milestone, not this commit.
