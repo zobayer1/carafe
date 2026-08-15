@@ -213,15 +213,18 @@ commit. Flask's development server defaults to loopback and makes you ask for
 anything wider, which is the safer default and the thing to revisit when the host
 argument arrives.
 
-Two behaviours here are recorded as untested rather than quietly assumed.
 `SO_REUSEADDR` needs a socket in TIME_WAIT to bind over, which is a property of
-accepted connections rather than of listeners, so the test only became writable
-once `accept()` existed; it is scheduled for the commit that adds the `Listener`
-accessors. `SOCK_CLOEXEC` on the listening socket is one `fcntl(F_GETFD)` away,
-but nothing exposes that descriptor to ask — the accepted socket is checked that
-way already. The three error returns are likewise left uncovered rather than
-marked excluded from coverage: they are untested, not unreachable, and an
-exclusion marker would turn a true signal into a fake 100%.
+accepted connections rather than of listeners, so the test could not be written
+until `accept()` existed. It now is, and it asserts first that a plain bind fails
+with `EADDRINUSE` — otherwise a port that happened to be free would let the test
+pass while proving nothing. `SOCK_CLOEXEC` on the listening socket stays
+untested: the flag is one `fcntl(F_GETFD)` away, but nothing exposes that
+descriptor to ask, and adding an accessor with no other caller would buy a test
+at the price of API. The accepted socket is checked that way already.
+
+The three error returns are left uncovered rather than marked excluded from
+coverage: they are untested, not unreachable, and an exclusion marker would turn
+a true signal into a fake 100%.
 
 ## A signal is not an outcome
 

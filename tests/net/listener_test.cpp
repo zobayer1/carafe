@@ -113,6 +113,24 @@ private:
     struct sigaction previous_{};
 };
 
+// A bind with no SO_REUSEADDR, which is how a test tells a free port from one
+// still held by a socket in TIME_WAIT.
+int plain_bind_errno(std::uint16_t port) {
+    const Socket sock{::socket(AF_INET, SOCK_STREAM, 0)};
+    EXPECT_TRUE(sock.valid());
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    const void* addr_ptr = &addr;
+    if (::bind(sock.get(), static_cast<const sockaddr*>(addr_ptr), sizeof(addr)) == -1) {
+        return errno;
+    }
+    return 0;
+}
+
 // The lowest free descriptor, which is what the next socket() will be handed.
 int next_free_fd() {
     const Socket probe{::socket(AF_INET, SOCK_STREAM, 0)};
@@ -169,6 +187,32 @@ TEST(ListenOn, RejectsAPortAlreadyBeingListenedOn) {
     EXPECT_EQ(result.error, ListenError::BindFailed);
     EXPECT_EQ(result.os_error, EADDRINUSE);
     EXPECT_FALSE(result.listener.has_value());
+}
+
+// What SO_REUSEADDR is actually for. TIME_WAIT belongs to the end that closes
+// first, so the accepted socket goes before the client.
+TEST(ListenOn, RebindsAPortLeftInTimeWait) {
+    std::uint16_t port = 0;
+    {
+        auto held = listen_on(0);
+        ASSERT_TRUE(held);
+        port = held.listener->port();
+
+        const Socket client = connect_to(port);
+        ASSERT_TRUE(client.valid());
+
+        auto accepted = held.listener->accept();
+        ASSERT_TRUE(accepted);
+        accepted.client.reset();
+    }  // the listener is gone too, so only TIME_WAIT still holds the port
+
+    // Without this the port might simply be free, and the rebind below would prove nothing.
+    ASSERT_EQ(plain_bind_errno(port), EADDRINUSE) << "nothing was left in TIME_WAIT";
+
+    const auto result = listen_on(port);
+
+    EXPECT_TRUE(result);
+    EXPECT_EQ(result.os_error, 0);
 }
 
 // Every failure path returns with the descriptor still owned by a local Socket.
