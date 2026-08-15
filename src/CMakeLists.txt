@@ -16,6 +16,7 @@ set(CARAFE_HEADERS
     http/request_reader.hpp
     net/listener.hpp
     net/socket.hpp
+    server/connection.hpp
 )
 
 set(CARAFE_SOURCES
@@ -25,6 +26,7 @@ set(CARAFE_SOURCES
     http/request_reader.cpp
     net/listener.cpp
     net/socket.cpp
+    server/connection.cpp
     version.cpp
 )
 

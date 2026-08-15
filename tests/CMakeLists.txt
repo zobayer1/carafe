@@ -32,6 +32,7 @@ set(CARAFE_TEST_SOURCES
     http/request_reader_test.cpp
     net/listener_test.cpp
     net/socket_test.cpp
+    server/connection_test.cpp
     version_test.cpp
 )
 

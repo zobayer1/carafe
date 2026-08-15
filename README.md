@@ -8,8 +8,8 @@ existing HTTP library. It is not production software.
 
 **Status:** a complete request head parser — bytes in, a `Request` out — and a
 socket that binds, listens, accepts one connection at a time, and moves bytes in
-both directions. Nothing has joined those two halves yet, so it does not serve a
-request, and there is no body.
+both directions. A `Connection` now joins the two, turning an accepted socket
+into successive requests. Nothing answers them yet, and there is no body.
 
 ## Goals
 
@@ -107,7 +107,7 @@ else. Tests cross the boundary on purpose by putting `src/` on their own include
 path; nothing else does, and a header's location is the statement of whether it
 is supported.
 
-Both trees group by subsystem — `http/` today, `net/` and `routing/` later — and
+Both trees group by subsystem — `http/`, `net/` and `server/` today — and
 `tests/` mirrors that shape with one `*_test.cpp` per source file. Generated
 headers, currently only `version.hpp` expanded from its `.in` template, land in
 `build/<preset>/generated/carafe/` and are included exactly like hand-written
@@ -127,6 +127,7 @@ inherits them automatically and must *not* apply them again.
 - [x] Descriptor ownership: a move-only `Socket` that closes exactly once
 - [x] TCP listener: socket, bind and listen, on a port the kernel may choose
 - [x] Accepting connections: `accept()`, one `Socket` per client
+- [x] Connections: socket bytes assembled into successive requests
 - [x] HTTP/1.1 request line parsing
 - [x] Line splitting: scan position across reads, length cap, CRLF policy
 - [x] Header field parsing: token names, OWS, obs-fold and CTL rejection

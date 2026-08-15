@@ -357,3 +357,40 @@ instead. Both paths therefore exist and are covered separately — the retry nee
 the send buffer stuffed full beforehand so the call blocks with nothing
 transferred, while the resume path falls out of any write large enough to be
 interrupted mid-flight.
+
+## The join belongs to neither side
+
+`Connection` reads bytes off a `Socket` and feeds them to a `RequestReader`, and
+it lives in a third subsystem because it cannot live in either of the two it
+joins. Putting a `Socket` into `http/` would end the parser's independence from
+transport, which is the property that lets every parser test run on a string
+literal with no descriptor in sight. Putting a `RequestReader` into `net/` would
+invert the same dependency. So `src/server/` exists, and routing, handlers and
+middleware will land beside it rather than in `http/`.
+
+The socket, the parser and the read buffer are members rather than parameters
+because all three are per-connection state with exactly the same lifetime. The
+reader in particular holds the bytes of a *half-received* head between reads —
+that is the whole reason it is a separate layer — so sharing one across two
+connections would splice the tail of one client's head onto the front of
+another's, assembling a request that nobody sent. Value membership makes that
+unrepresentable rather than merely discouraged.
+
+`ConnectionResult` carries two independent failure channels, and they are not
+collapsible. A malformed head is answerable: the socket is fine, and the caller
+owes the client a 400, 414 or 431 depending on which `RequestError` came back. A
+failed read is not: there is nobody left to answer. One field could not say which
+of those happened without inventing an error value that means "ask elsewhere".
+
+The loop parses before it reads, and the order is load-bearing rather than
+stylistic. A pipelining client sends two requests in one segment and then waits
+for the first response. Reading first, the server would already hold the second
+request in the reader's buffer and still block waiting for bytes that have
+already arrived — a deadlock in which both sides are correct and neither moves.
+Parsing first drains what is in hand before ever asking the kernel for more.
+
+One trade is recorded rather than solved. A stream that ends part-way through a
+head is reported as a finished connection, not a bad request. `RequestReader`
+does not expose whether it is mid-head, and a peer that has hung up cannot be
+told anything anyway. The case that would justify the distinction is a client
+that half-closes and still reads, which nothing here can produce yet.
