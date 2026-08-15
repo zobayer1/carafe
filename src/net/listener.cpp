@@ -4,9 +4,11 @@
 
 #include <cerrno>
 #include <cstdint>
+#include <optional>
 #include <utility>
 
 #include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 
 namespace carafe::net {

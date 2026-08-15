@@ -1,5 +1,8 @@
 #include "http/request_parser.hpp"
 
+#include <carafe/http/headers.hpp>
+#include <carafe/http/request.hpp>
+
 #include "http/ascii.hpp"
 
 #include <array>

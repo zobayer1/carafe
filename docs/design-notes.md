@@ -274,3 +274,40 @@ lever is to `shutdown()` or close the listening descriptor, which makes `accept`
 return `EINVAL` or `EBADF` — reported through `os_error` rather than swallowed.
 The blocking behaviour itself is deliberate for now; non-blocking accept is a
 question for the concurrency milestone, not this commit.
+
+## End of stream is not a failure
+
+`Socket::read` has three outcomes where most of the codebase has two: bytes
+arrived, the peer closed, or the call failed. The middle one is the whole reason
+the type is shaped the way it is. A clean close is how every well-behaved client
+finishes a connection, so folding it in with errors would make the single most
+ordinary event on a socket look like a fault. `explicit operator bool` therefore
+tests `os_error == 0` and stays *true* at end of stream, and the caller asks the
+second question separately by checking whether `bytes` is engaged. Two questions
+that cannot be collapsed into one are given two places to ask.
+
+That is the same shape as `LineResult` — an error enum, an optional payload, and
+`nullopt` meaning "nothing this time" rather than "something went wrong". There
+is no `ReadError` to go with it, for the reason `AcceptResult` has none: one
+syscall, so `errno` is the whole story and an enum would have a single
+meaningful value.
+
+The payload is a `std::string_view` into the caller's buffer rather than a byte
+count. Both carry the same information, but only one of them is directly usable:
+`reader.append(*result.bytes)` against `reader.append({buffer, result.bytes})`,
+where the second rebuilds the pair by hand at every call site and can get it
+wrong at any of them. The cost is a lifetime rule — the view dies with the
+buffer — which is the same rule `LineReader::next_line` already imposes, and it
+is why the buffer belongs to the caller in the first place.
+
+`read` is not `const`, and `readability-make-member-function-const` is
+suppressed rather than obeyed. A `const Socket&` reads as something safe to hand
+around, and these bytes are gone from the stream once taken: no second reader
+gets them back. `std::istream::read` is non-const for the same reason. `EINTR`
+is retried inside, following `accept` rather than re-deciding.
+
+One trap is recorded rather than fixed. `recv` with a count of zero returns
+zero, which this reports as end of stream — so a caller that ever passes a full
+buffer would hang up on a live connection. No caller does, and the `string_view`
+design leaves the honest fix available when one might: an engaged but empty view
+means "read nothing, still open", which a bare count could not express.

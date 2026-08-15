@@ -1,16 +1,15 @@
 #include "net/listener.hpp"
 
+#include "alarm.hpp"
 #include "net/printers.hpp"
 #include "net/socket.hpp"
 
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
-#include <csignal>
 #include <cstdint>
 #include <fcntl.h>
 #include <optional>
-#include <pthread.h>
 #include <thread>
 #include <utility>
 
@@ -18,7 +17,6 @@
 #include <gtest/gtest.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
-#include <sys/time.h>
 
 namespace {
 
@@ -27,6 +25,9 @@ using carafe::net::listen_on;
 using carafe::net::Listener;
 using carafe::net::ListenError;
 using carafe::net::Socket;
+using carafe::test::AlarmIn;
+using carafe::test::alarms_delivered;
+using carafe::test::mask_alarm;
 
 // The handshake completes without an accept() on the other side, so the caller gets
 // a live client back. An invalid Socket means nothing was listening.
@@ -63,55 +64,6 @@ char read_byte(const Socket& sock) {
     EXPECT_EQ(::recv(sock.get(), &byte, 1, 0), ssize_t{1});
     return byte;
 }
-
-// A handler can report back only through a global of this type.
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
-volatile std::sig_atomic_t alarms_delivered = 0;
-
-extern "C" void count_alarm(int /*signal*/) {
-    alarms_delivered = alarms_delivered + 1;
-}
-
-// A thread created while SIGALRM is blocked inherits that, so only this one is
-// ever interrupted.
-void mask_alarm(int how) {
-    sigset_t alarm_only;
-    sigemptyset(&alarm_only);
-    sigaddset(&alarm_only, SIGALRM);
-    EXPECT_EQ(pthread_sigmask(how, &alarm_only, nullptr), 0);
-}
-
-// One-shot SIGALRM, handler and timer restored on the way out. No SA_RESTART, so
-// the kernel hands the interrupted call back as EINTR instead of resuming it.
-class AlarmIn {
-public:
-    explicit AlarmIn(suseconds_t micros) {
-        struct sigaction handler{};
-        handler.sa_handler = count_alarm;
-        handler.sa_flags = 0;
-        sigemptyset(&handler.sa_mask);
-        EXPECT_EQ(::sigaction(SIGALRM, &handler, &previous_), 0);
-
-        alarms_delivered = 0;
-        itimerval timer{};
-        timer.it_value.tv_usec = micros;
-        EXPECT_EQ(::setitimer(ITIMER_REAL, &timer, nullptr), 0);
-    }
-
-    ~AlarmIn() {
-        const itimerval disarm{};
-        ::setitimer(ITIMER_REAL, &disarm, nullptr);
-        ::sigaction(SIGALRM, &previous_, nullptr);
-    }
-
-    AlarmIn(const AlarmIn&) = delete;
-    AlarmIn& operator=(const AlarmIn&) = delete;
-    AlarmIn(AlarmIn&&) = delete;
-    AlarmIn& operator=(AlarmIn&&) = delete;
-
-private:
-    struct sigaction previous_{};
-};
 
 // A bind with no SO_REUSEADDR, which is how a test tells a free port from one
 // still held by a socket in TIME_WAIT.

@@ -20,6 +20,7 @@ include(GoogleTest)
 
 # Headers are listed only so IDEs show them in the project tree.
 set(CARAFE_TEST_HEADERS
+    alarm.hpp
     http/printers.hpp
     net/printers.hpp
 )
