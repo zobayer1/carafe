@@ -54,4 +54,20 @@ ReadResult Socket::read(char* buffer, std::size_t size) {
     }
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const)
+WriteResult Socket::write(std::string_view bytes) {
+    while (!bytes.empty()) {
+        const ssize_t written = ::send(fd_, bytes.data(), bytes.size(), MSG_NOSIGNAL);
+        if (written == -1) {
+            // A signal arriving mid-write is not an outcome, just an interruption: ask again.
+            if (errno != EINTR) {
+                return {errno};
+            }
+            continue;
+        }
+        bytes.remove_prefix(static_cast<std::size_t>(written));
+    }
+    return {0};
+}
+
 }  // namespace carafe::net

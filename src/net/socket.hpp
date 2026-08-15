@@ -17,6 +17,16 @@ struct ReadResult {
     }
 };
 
+// Every byte or none of them: a short write is an obligation, not a result, so
+// this does not hand one back.
+struct WriteResult {
+    int os_error = 0;
+
+    [[nodiscard]] explicit operator bool() const noexcept {
+        return os_error == 0;
+    }
+};
+
 // Sole owner of one file descriptor, closed exactly once when the Socket dies.
 // An empty Socket holds -1 and owns nothing.
 class Socket {
@@ -46,6 +56,10 @@ public:
     // Up to size bytes into the caller's buffer. The view in the result points
     // into that buffer and dies with it.
     [[nodiscard]] ReadResult read(char* buffer, std::size_t size);
+
+    // All bytes from the caller's buffer. The caller must ensure that the buffer
+    // remains valid until the write completes.
+    [[nodiscard]] WriteResult write(std::string_view bytes);
 
 private:
     // The file descriptor owned by this Socket. -1 means invalid socket.

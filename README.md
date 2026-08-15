@@ -7,8 +7,9 @@ This is a learning project, built from the socket up rather than on top of an
 existing HTTP library. It is not production software.
 
 **Status:** a complete request head parser — bytes in, a `Request` out — and a
-socket that binds, listens, and hands back one connection at a time. Nothing
-reads a request off the wire yet, and there is no body.
+socket that binds, listens, accepts one connection at a time, and moves bytes in
+both directions. Nothing has joined those two halves yet, so it does not serve a
+request, and there is no body.
 
 ## Goals
 

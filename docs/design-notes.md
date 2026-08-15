@@ -311,3 +311,49 @@ zero, which this reports as end of stream — so a caller that ever passes a ful
 buffer would hang up on a live connection. No caller does, and the `string_view`
 design leaves the honest fix available when one might: an engaged but empty view
 means "read nothing, still open", which a bare count could not express.
+
+## A short write is an obligation
+
+`Socket::write` sends everything or reports why it could not, where `read`
+returns whatever happened to be there. The asymmetry is deliberate. A short read
+is *information* — bytes arrived, here they are, ask again when you want more. A
+short write is an *obligation*: bytes did not go out, and someone must send the
+rest. Obligations are what call sites forget, and a forgotten tail is a truncated
+response that reads like a bug in the client. So the loop lives here once,
+instead of at every call site that ever writes a byte.
+
+It is named `write` rather than `write_all` because there is no other write to
+tell it apart from. Naming a distinction before it exists is the same thing that
+kept `release()` off `Socket`; if a partial-write primitive is ever needed, that
+is the one that gets the qualified name.
+
+`::send` with `MSG_NOSIGNAL`, never `::write`. Writing to a socket whose peer has
+gone raises `SIGPIPE`, whose default disposition kills the process — which is how
+a server dies when one client hangs up early. The flag turns that into `EPIPE` in
+`errno`. The alternatives were rejected: `signal(SIGPIPE, SIG_IGN)` works but a
+library has no business changing the host process's signal disposition, and
+`SO_NOSIGPIPE` exists only on the BSDs. This is the reason `recv` was chosen over
+`read` on the other side too — keeping the flags argument in view.
+
+Progress is tracked by shrinking the view with `remove_prefix` rather than by an
+offset variable. It compiles to two instructions whose flags already answer
+`!bytes.empty()`, so the loop condition is free, and it leaves exactly one
+statement that advances and one that decides completion. An explicit
+"did we send it all" check would put the completion test in two places that have
+to agree. The `!bytes.empty()` guard is load-bearing rather than cosmetic: it is
+what keeps a zero-length argument away from `send`, where a zero return would
+leave the loop with no progress to make.
+
+The partial-write path also creates a trap worth naming, because the obvious
+implementation falls into it. `errno` is not cleared by a successful call, so
+code that treats a short return as failure reads whatever the last failure
+anywhere in the process left behind — reporting an error that did not happen, or,
+if the stale value happens to be `EINTR`, resending a prefix that already went
+out. Only `-1` means failure, which is what the branch tests.
+
+One discovery from testing: on a blocking socket a signal produces `EINTR` only
+when it beats the first byte out. Arriving later, it comes back as a short count
+instead. Both paths therefore exist and are covered separately — the retry needs
+the send buffer stuffed full beforehand so the call blocks with nothing
+transferred, while the resume path falls out of any write large enough to be
+interrupted mid-flight.
