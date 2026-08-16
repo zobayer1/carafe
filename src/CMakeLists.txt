@@ -9,6 +9,7 @@ configure_file(
 set(CARAFE_HEADERS
     "${PROJECT_BINARY_DIR}/generated/carafe/version.hpp"
     "${PROJECT_SOURCE_DIR}/include/carafe/app.hpp"
+    "${PROJECT_SOURCE_DIR}/include/carafe/http/handler.hpp"
     "${PROJECT_SOURCE_DIR}/include/carafe/http/headers.hpp"
     "${PROJECT_SOURCE_DIR}/include/carafe/http/request.hpp"
     "${PROJECT_SOURCE_DIR}/include/carafe/http/response.hpp"
@@ -19,6 +20,7 @@ set(CARAFE_HEADERS
     net/listener.hpp
     net/socket.hpp
     server/connection.hpp
+    server/router.hpp
     server/serve.hpp
 )
 
@@ -32,6 +34,7 @@ set(CARAFE_SOURCES
     net/listener.cpp
     net/socket.cpp
     server/connection.cpp
+    server/router.cpp
     server/serve.cpp
     version.cpp
 )

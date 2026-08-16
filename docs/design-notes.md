@@ -395,6 +395,46 @@ does not expose whether it is mid-head, and a peer that has hung up cannot be
 told anything anyway. The case that would justify the distinction is a client
 that half-closes and still reads, which nothing here can produce yet.
 
+## Not matching is two different answers
+
+`Router::find` returns a handler pointer and a `path_matched` flag, because a
+request that finds no handler has two distinct fates. A path nobody registered is
+a 404. A path registered under another method is a 405, and the client learns
+something useful from the difference — that the resource exists and the verb was
+wrong. A null pointer alone cannot say which, so the flag carries the one bit the
+pointer cannot. It is meaningless when the pointer is non-null, which is why
+`operator bool` tests only the pointer: one field per independent channel, the
+rule `ReadResult` and `ConnectionResult` already follow.
+
+Routes live in a `vector` scanned in registration order rather than a hash map
+keyed by path. Static paths would suit a map, but path parameters are the next
+step and patterns have to be tried in order — starting with the structure that
+generalises avoids replacing the storage almost immediately. Two rules fall out
+of the scan for free. Registering a path twice keeps the first handler, because
+the exact match returns at once, which makes a duplicate harmless rather than an
+error `add` would need a channel to report. And an explicit HEAD route beats the
+HEAD-to-GET fallback whatever order they were registered in, because the fallback
+is remembered and returned only after the loop.
+
+That fallback is RFC 9110's definition made structural: HEAD is GET without the
+body, so registering a GET route answers both. It runs one way only. A GET is
+never served by a handler written for HEAD, which is entitled to compute nothing
+at all.
+
+`find` cuts the target at the first `?` rather than expecting a stripped path,
+and this is expedient rather than principled. Splitting a request-target is
+parsing's job, and it belongs in `Request` alongside the query parameters that
+nothing exposes yet. Until then the router does it, because the alternative fails
+silently: a caller who forgets sees a 404 with nothing to suggest why, and
+`find(method, target)` gives no hint that `target` is not what it says. Keeping
+the cut inside also keeps the query cases testable without a socket.
+
+The handler pointer aliases into the route vector, so `add` invalidates it. That
+is the same contract `Headers::get` documents, and it holds for the same reason
+in practice: routes are registered before the listener starts, never during.
+Returning the `std::function` by value would close the hole at the cost of a copy
+— possibly an allocation — on every request.
+
 ## Content-Length is not the caller's to get wrong
 
 `Response` is a struct with three public fields, and that is the whole type. A
