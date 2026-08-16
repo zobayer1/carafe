@@ -11,6 +11,7 @@ set(CARAFE_HEADERS
     "${PROJECT_SOURCE_DIR}/include/carafe/app.hpp"
     "${PROJECT_SOURCE_DIR}/include/carafe/http/headers.hpp"
     "${PROJECT_SOURCE_DIR}/include/carafe/http/request.hpp"
+    "${PROJECT_SOURCE_DIR}/include/carafe/http/response.hpp"
     http/ascii.hpp
     http/line_reader.hpp
     http/request_parser.hpp
@@ -27,6 +28,7 @@ set(CARAFE_SOURCES
     http/line_reader.cpp
     http/request_parser.cpp
     http/request_reader.cpp
+    http/response.cpp
     net/listener.cpp
     net/socket.cpp
     server/connection.cpp

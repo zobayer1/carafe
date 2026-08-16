@@ -1,6 +1,7 @@
 #include "server/serve.hpp"
 
 #include <carafe/http/request.hpp>
+#include <carafe/http/response.hpp>
 #include <carafe/version.hpp>
 
 #include "http/request_reader.hpp"
@@ -18,69 +19,60 @@ namespace {
 // in a comment since the enum existed, and nothing until now could act on it.
 // No default label, so adding an enumerator becomes a warning here rather than
 // a silent 400.
-std::string_view status_for(http::RequestError error) {
+int status_for(http::RequestError error) {
     switch (error) {
         case http::RequestError::UnknownMethod:
-            return "501 Not Implemented";
+            return 501;
         case http::RequestError::UnsupportedVersion:
-            return "505 HTTP Version Not Supported";
+            return 505;
         case http::RequestError::RequestLineTooLong:
-            return "414 URI Too Long";
+            return 414;
         case http::RequestError::HeaderTooLong:
         case http::RequestError::TooManyHeaders:
         case http::RequestError::HeadTooLarge:
-            return "431 Request Header Fields Too Large";
+            return 431;
         case http::RequestError::Malformed:
         case http::RequestError::None:
             break;
     }
-    return "400 Bad Request";
+    return 400;
 }
 
-// Content-Length on every response, so the client knows where the body ends
-// without waiting for a close -- which is what lets the connection stay open.
-std::string response_head(std::string_view status, std::size_t body_size,
-                          std::string_view extra_headers = "") {
-    std::string out = "HTTP/1.1 ";
-    out += status;
-    out += "\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ";
-    out += std::to_string(body_size);
-    out += "\r\n";
-    out += extra_headers;
-    out += "\r\n";
-    return out;
-}
-
-std::string text_response(std::string_view status, std::string_view body,
-                          std::string_view extra_headers = "") {
-    std::string out = response_head(status, body.size(), extra_headers);
-    out += body;
-    return out;
+// text/plain is this server's policy, not HTTP's -- serialize sends the headers
+// it is handed and adds none of its own but the length.
+http::Response text_response(int status, std::string body) {
+    http::Response response;
+    response.status = status;
+    response.headers.add({"content-type", "text/plain; charset=utf-8"});
+    response.body = std::move(body);
+    return response;
 }
 
 // Connection: close, because the byte stream cannot be resynchronised after a bad
 // head. Without it the client waits for a response that will never come.
-std::string error_response(http::RequestError error) {
-    const std::string_view status = status_for(error);
-    std::string body{status};
+http::Response error_response(http::RequestError error) {
+    const int status = status_for(error);
+
+    std::string body = std::to_string(status);
+    body += ' ';
+    body += http::status_message(status);
     body += '\n';
-    return text_response(status, body, "Connection: close\r\n");
+
+    http::Response response = text_response(status, std::move(body));
+    response.headers.add({"connection", "close"});
+    return response;
 }
 
 // The body shows the head was really parsed: the version comes from the library,
 // the target off the wire.
-std::string response_for(const http::Request& request) {
+http::Response response_for(const http::Request& request) {
     std::string body = "carafe ";
     body += version();
     body += "\nyou asked for ";
     body += request.target;
     body += '\n';
 
-    // A HEAD answer carries exactly the headers its GET would, and no body.
-    if (request.method == http::Method::Head) {
-        return response_head("200 OK", body.size());
-    }
-    return text_response("200 OK", body);
+    return text_response(200, std::move(body));
 }
 
 }  // namespace
@@ -94,7 +86,7 @@ void serve_connection(Connection& conn) {
             // be resynchronised after a bad head, and RequestReader latches the
             // failure. A read failure gets no reply because nobody is listening.
             if (result.os_error == 0) {
-                static_cast<void>(conn.write(error_response(result.error)));
+                static_cast<void>(conn.write(error_response(result.error).serialize()));
             }
             return;
         }
@@ -103,7 +95,9 @@ void serve_connection(Connection& conn) {
             return;  // the client finished
         }
 
-        if (!conn.write(response_for(*result.request))) {
+        const http::Response response = response_for(*result.request);
+        const bool with_body = result.request->method != http::Method::Head;
+        if (!conn.write(response.serialize(with_body))) {
             return;  // nobody left to answer
         }
     }

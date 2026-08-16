@@ -395,6 +395,58 @@ does not expose whether it is mid-head, and a peer that has hung up cannot be
 told anything anyway. The case that would justify the distinction is a client
 that half-closes and still reads, which nothing here can produce yet.
 
+## Content-Length is not the caller's to get wrong
+
+`Response` is a struct with three public fields, and that is the whole type. A
+class earns its keep when some relationship between members must hold — `Headers`
+lowercases on `add` so lookup can compare directly, `Socket` deletes its copy so
+exactly one owner closes the fd, `Connection` keeps its socket and reader
+together so two clients' bytes cannot be spliced. Ask what an inconsistent
+`Response` would look like and there is no answer: any status, any headers, any
+body is valid. Private members and setters that only assign would be ceremony
+around a value with no rule. It also stays an aggregate, which matters because a
+handler is what constructs one.
+
+The one rule that does exist is about bytes, so it lives in `serialize`.
+`Content-Length` is computed from `body.size()` and any the caller supplied is
+skipped, because it is the single number a client cannot recover from when it is
+wrong: too small and the response is truncated mid-body, too large and the
+connection hangs waiting for bytes nobody will send. Two of them is worse still —
+the client believes whichever it reads first and the ends silently disagree about
+where the body stops. Overriding an explicit caller header is a real cost,
+accepted because the failure it prevents is invisible and remote.
+
+`with_body` is a parameter rather than a field for a reason the error path makes
+concrete. `serve_connection` knows the method only when a request parsed; a
+malformed head has none, which is why it is being rejected. As a field,
+`error_response` would have to invent an answer to a question it cannot answer.
+As a parameter it is simply not asked, and the default sends everything.
+
+The HEAD rule stops being maintained by hand in the process. `response_for` used
+to build the body even for HEAD purely so the declared length matched what a GET
+would have sent — an invariant a later edit could quietly break by skipping the
+work. Now the body is always built and the length always comes from it, and the
+flag only decides how much goes on the wire. There is no path that computes one
+without the other, so the comment warning about it is gone with the bug it
+described.
+
+Status is an `int` with a separate `status_message`, not an enum. The exhaustive
+switch an enum buys is something `status_for` wants, not something a handler
+wants, and a framework user is entitled to answer 429 without carafe having
+enumerated it. Unknown codes get an empty phrase rather than a guess, which RFC
+7230 permits — the space after the code belongs to the status line, not to the
+phrase, so `HTTP/1.1 418 \r\n` is well formed and only stays that way if nothing
+concatenates the space onto the phrase.
+
+Field names go on the wire lowercased, because `Headers::add` lowercases what it
+is given and a response whose own headers were capitalised would imply a
+distinction HTTP does not make. HTTP/1.1 compares field names case-insensitively
+and HTTP/2 requires them lowercase outright, so this is the spelling that stays
+correct. Changing it caught something worth recording: the serve tests that
+asserted `Connection: close` was *present* went red, and the one asserting it was
+*absent* stayed green while testing nothing at all. A changed spelling announces
+itself in presence assertions and hides in absence assertions.
+
 ## App is the seam, and it is deliberately thin
 
 Writing the first example forced the first public API decision, because nothing

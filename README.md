@@ -134,7 +134,7 @@ inherits them automatically and must *not* apply them again.
 - [x] Header field parsing: token names, OWS, obs-fold and CTL rejection
 - [x] Header block assembly: duplicates, Host, total-head limit
 - [ ] Request body via Content-Length
-- [ ] Response building and serialization
+- [x] Response building and serialization
 - [ ] Routing: static paths, then path parameters
 - [ ] Handler registration API
 - [ ] Concurrency: thread-per-connection, then a thread pool

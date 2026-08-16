@@ -67,10 +67,10 @@ std::string_view body_of(std::string_view response) {
     return blank == std::string_view::npos ? std::string_view{} : response.substr(blank + 4);
 }
 
-// The Content-Length the response claims, which is only worth having because it
+// The content-length the response claims, which is only worth having because it
 // can then be checked against the bytes that actually followed.
 std::size_t declared_length(std::string_view response) {
-    constexpr std::string_view field = "\r\nContent-Length: ";
+    constexpr std::string_view field = "\r\ncontent-length: ";
     const auto at = response.find(field);
     EXPECT_NE(at, std::string_view::npos);
     if (at == std::string_view::npos) {
@@ -106,7 +106,7 @@ TEST(ServeConnection, PutsTheParsedTargetInTheBody) {
     EXPECT_NE(body_of(response).find("/a/deep/path"), std::string_view::npos);
 }
 
-// The classic HEAD bug is a Content-Length of zero. It must be the length the
+// The classic HEAD bug is a content-length of zero. It must be the length the
 // matching GET would have sent, with none of those bytes actually following.
 TEST(ServeConnection, AnswersAHeadWithTheSameLengthAndNoBody) {
     auto with_body = connected_pair();
@@ -132,7 +132,7 @@ TEST(ServeConnection, AnswersAMalformedHeadWithFourHundredAndCloses) {
     const std::string response = serve_and_read(pair);
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 400 Bad Request");
-    EXPECT_NE(response.find("Connection: close\r\n"), std::string::npos);
+    EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
 }
 
 TEST(ServeConnection, AnswersAnUnknownMethodWithFiveOhOne) {
@@ -174,7 +174,7 @@ TEST(ServeConnection, AnswersTooManyHeadersWithFourThirtyOne) {
 }
 
 // Keep-alive is the point of the loop: two heads in, two responses out, and no
-// Connection: close on either.
+// connection: close on either.
 TEST(ServeConnection, AnswersTwoRequestsOnOneConnection) {
     auto pair = connected_pair();
     send_all(pair.first,
@@ -185,7 +185,7 @@ TEST(ServeConnection, AnswersTwoRequestsOnOneConnection) {
 
     EXPECT_NE(response.find("/one"), std::string::npos);
     EXPECT_NE(response.find("/two"), std::string::npos);
-    EXPECT_EQ(response.find("Connection: close"), std::string::npos);
+    EXPECT_EQ(response.find("connection: close"), std::string::npos);
     EXPECT_EQ(response.find("HTTP/1.1 200 OK"), 0U);
     EXPECT_NE(response.rfind("HTTP/1.1 200 OK"), 0U);
 }
