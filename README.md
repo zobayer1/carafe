@@ -6,11 +6,19 @@ requests, responses, and not much else.
 This is a learning project, built from the socket up rather than on top of an
 existing HTTP library. It is not production software.
 
-**Status:** it serves. `make run` starts a server that answers every request with
-the same text response and gives malformed heads their proper statuses — 400,
-414, 431, 501, 505. Connections are kept alive and handled one at a time. There
-are no routes, no handlers and no request body yet, so every path gets the same
-answer.
+**Status:** it routes. `make run` starts a server with two registered routes;
+anything else gets a 404, and a known path under the wrong method a 405.
+Malformed heads still get their proper statuses — 400, 414, 431, 501, 505.
+Connections are kept alive and handled one at a time. Paths must match exactly,
+and there is no request body yet.
+
+```cpp
+carafe::App app;
+app.get("/hello", [](const carafe::http::Request&) {
+    return carafe::http::text_response(200, "hello\n");
+});
+app.run(8080);
+```
 
 ## Goals
 
@@ -135,8 +143,9 @@ inherits them automatically and must *not* apply them again.
 - [x] Header block assembly: duplicates, Host, total-head limit
 - [ ] Request body via Content-Length
 - [x] Response building and serialization
-- [ ] Routing: static paths, then path parameters
-- [ ] Handler registration API
+- [x] Routing: static paths matched by method, with 404 and 405
+- [x] Handler registration API
+- [ ] Routing: path parameters
 - [ ] Concurrency: thread-per-connection, then a thread pool
 - [ ] Middleware
 - [ ] Keep-alive, chunked transfer encoding

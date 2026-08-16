@@ -151,6 +151,8 @@ TEST(Response, BodyIsWrittenExactlyAndNothingFollowsIt) {
 TEST(StatusMessage, NamesEveryStatusCarafeSends) {
     EXPECT_EQ(status_message(200), "OK");
     EXPECT_EQ(status_message(400), "Bad Request");
+    EXPECT_EQ(status_message(404), "Not Found");
+    EXPECT_EQ(status_message(405), "Method Not Allowed");
     EXPECT_EQ(status_message(414), "URI Too Long");
     EXPECT_EQ(status_message(431), "Request Header Fields Too Large");
     EXPECT_EQ(status_message(501), "Not Implemented");

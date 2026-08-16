@@ -2,17 +2,24 @@
 
 #include "net/listener.hpp"
 #include "server/connection.hpp"
+#include "server/router.hpp"
 #include "server/serve.hpp"
 
 #include <cerrno>
 #include <cstdint>
+#include <memory>
 #include <utility>
 
 namespace carafe {
 
-// Static today only because App holds no routes yet. Making it static now would
-// have to be undone, and that breaks every caller that wrote App::run.
-// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+App::App() : router_(std::make_unique<server::Router>()) {}
+
+App::~App() = default;
+
+void App::get(std::string path, http::Handler handler) {
+    router_->add(http::Method::Get, std::move(path), std::move(handler));
+}
+
 bool App::run(std::uint16_t port) {
     // The optional is tested rather than the result: both say the same thing here,
     // but only this spelling proves to the analyser that the deref below is safe.
@@ -38,7 +45,7 @@ bool App::run(std::uint16_t port) {
         // Served to completion before the next accept, and closed when conn leaves
         // scope. One client at a time until the concurrency milestone.
         server::Connection conn{std::move(*accepted.client)};
-        server::serve_connection(conn);
+        server::serve_connection(conn, *router_);
     }
 }
 

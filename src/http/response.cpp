@@ -2,6 +2,7 @@
 
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace carafe::http {
 
@@ -11,6 +12,10 @@ std::string_view status_message(int status) noexcept {
             return "OK";
         case 400:
             return "Bad Request";
+        case 404:
+            return "Not Found";
+        case 405:
+            return "Method Not Allowed";
         case 414:
             return "URI Too Long";
         case 431:
@@ -22,6 +27,14 @@ std::string_view status_message(int status) noexcept {
         default:
             return "";
     }
+}
+
+Response text_response(int status, std::string body) {
+    Response response;
+    response.status = status;
+    response.headers.add({"content-type", "text/plain; charset=utf-8"});
+    response.body = std::move(body);
+    return response;
 }
 
 std::string Response::serialize(bool with_body) const {

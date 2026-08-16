@@ -1,7 +1,12 @@
 #include "server/serve.hpp"
 
+#include <carafe/http/handler.hpp>
+#include <carafe/http/request.hpp>
+#include <carafe/http/response.hpp>
+
 #include "net/socket.hpp"
 #include "server/connection.hpp"
+#include "server/router.hpp"
 
 #include <array>
 #include <cstddef>
@@ -15,9 +20,28 @@
 
 namespace {
 
+using carafe::http::Handler;
+using carafe::http::Method;
+using carafe::http::Request;
+using carafe::http::text_response;
 using carafe::net::Socket;
 using carafe::server::Connection;
+using carafe::server::Router;
 using carafe::server::serve_connection;
+
+// Handlers echo the target, so a 200 says which route answered rather than only
+// that something did.
+Handler echo() {
+    return [](const Request& request) {
+        return text_response(200, "you asked for " + request.target + "\n");
+    };
+}
+
+Router routing(std::string path) {
+    Router router;
+    router.add(Method::Get, std::move(path), echo());
+    return router;
+}
 
 std::pair<Socket, Socket> connected_pair() {
     std::array<int, 2> fds{-1, -1};
@@ -36,7 +60,7 @@ void send_all(const Socket& sock, std::string_view bytes) {
 // Serves the connection, then closes the server end so the client can read to end
 // of stream. That is what makes "the whole response" a well defined thing to
 // assert on -- a live connection would otherwise just block waiting for more.
-std::string serve_and_read(std::pair<Socket, Socket>& pair) {
+std::string serve_and_read(std::pair<Socket, Socket>& pair, const Router& router) {
     // The client half-closes first: it has said all it intends to. Without that a
     // keep-alive responder is still waiting for the next request, quite correctly,
     // and the test deadlocks against its own server.
@@ -44,7 +68,7 @@ std::string serve_and_read(std::pair<Socket, Socket>& pair) {
 
     {
         Connection conn{std::move(pair.second)};
-        serve_connection(conn);
+        serve_connection(conn, router);
     }
 
     std::string received;
@@ -88,11 +112,11 @@ TEST(ServeConnection, AnswersAGetWithATwoHundred) {
     auto pair = connected_pair();
     send_all(pair.first, get_root);
 
-    const std::string response = serve_and_read(pair);
+    const std::string response = serve_and_read(pair, routing("/"));
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 200 OK");
     EXPECT_EQ(declared_length(response), body_of(response).size());
-    EXPECT_NE(body_of(response).find("carafe "), std::string_view::npos);
+    EXPECT_NE(body_of(response).find("you asked for /"), std::string_view::npos);
 }
 
 // The target comes off the wire, so seeing it back proves the head was parsed
@@ -101,7 +125,7 @@ TEST(ServeConnection, PutsTheParsedTargetInTheBody) {
     auto pair = connected_pair();
     send_all(pair.first, "GET /a/deep/path HTTP/1.1\r\nHost: example.test\r\n\r\n");
 
-    const std::string response = serve_and_read(pair);
+    const std::string response = serve_and_read(pair, routing("/a/deep/path"));
 
     EXPECT_NE(body_of(response).find("/a/deep/path"), std::string_view::npos);
 }
@@ -111,11 +135,13 @@ TEST(ServeConnection, PutsTheParsedTargetInTheBody) {
 TEST(ServeConnection, AnswersAHeadWithTheSameLengthAndNoBody) {
     auto with_body = connected_pair();
     send_all(with_body.first, get_root);
-    const std::string get = serve_and_read(with_body);
+    const std::string get = serve_and_read(with_body, routing("/"));
 
     auto without_body = connected_pair();
     send_all(without_body.first, "HEAD / HTTP/1.1\r\nHost: example.test\r\n\r\n");
-    const std::string head = serve_and_read(without_body);
+    // The same GET route answers it: HEAD is routed by the fallback, not by a
+    // route of its own.
+    const std::string head = serve_and_read(without_body, routing("/"));
 
     EXPECT_EQ(status_line(head), "HTTP/1.1 200 OK");
     EXPECT_EQ(declared_length(head), declared_length(get));
@@ -129,7 +155,7 @@ TEST(ServeConnection, AnswersAMalformedHeadWithFourHundredAndCloses) {
     auto pair = connected_pair();
     send_all(pair.first, "NOTAREQUEST\r\n\r\n");
 
-    const std::string response = serve_and_read(pair);
+    const std::string response = serve_and_read(pair, Router{});
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 400 Bad Request");
     EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
@@ -139,14 +165,15 @@ TEST(ServeConnection, AnswersAnUnknownMethodWithFiveOhOne) {
     auto pair = connected_pair();
     send_all(pair.first, "FROB / HTTP/1.1\r\nHost: example.test\r\n\r\n");
 
-    EXPECT_EQ(status_line(serve_and_read(pair)), "HTTP/1.1 501 Not Implemented");
+    EXPECT_EQ(status_line(serve_and_read(pair, Router{})), "HTTP/1.1 501 Not Implemented");
 }
 
 TEST(ServeConnection, AnswersAnUnsupportedVersionWithFiveOhFive) {
     auto pair = connected_pair();
     send_all(pair.first, "GET / HTTP/2.0\r\nHost: example.test\r\n\r\n");
 
-    EXPECT_EQ(status_line(serve_and_read(pair)), "HTTP/1.1 505 HTTP Version Not Supported");
+    EXPECT_EQ(status_line(serve_and_read(pair, Router{})),
+              "HTTP/1.1 505 HTTP Version Not Supported");
 }
 
 // Over the 8192-byte line cap, which is a different failure from a malformed one
@@ -156,7 +183,7 @@ TEST(ServeConnection, AnswersAnOverlongRequestLineWithFourFourteen) {
     const std::string target(9000, 'x');
     send_all(pair.first, "GET /" + target + " HTTP/1.1\r\nHost: example.test\r\n\r\n");
 
-    EXPECT_EQ(status_line(serve_and_read(pair)), "HTTP/1.1 414 URI Too Long");
+    EXPECT_EQ(status_line(serve_and_read(pair, Router{})), "HTTP/1.1 414 URI Too Long");
 }
 
 // Past the 100-field cap. Three separate errors share this status, so the mapping
@@ -170,7 +197,8 @@ TEST(ServeConnection, AnswersTooManyHeadersWithFourThirtyOne) {
     request += "\r\n";
     send_all(pair.first, request);
 
-    EXPECT_EQ(status_line(serve_and_read(pair)), "HTTP/1.1 431 Request Header Fields Too Large");
+    EXPECT_EQ(status_line(serve_and_read(pair, Router{})),
+              "HTTP/1.1 431 Request Header Fields Too Large");
 }
 
 // Keep-alive is the point of the loop: two heads in, two responses out, and no
@@ -181,7 +209,11 @@ TEST(ServeConnection, AnswersTwoRequestsOnOneConnection) {
              "GET /one HTTP/1.1\r\nHost: a.test\r\n\r\n"
              "GET /two HTTP/1.1\r\nHost: b.test\r\n\r\n");
 
-    const std::string response = serve_and_read(pair);
+    Router router;
+    router.add(Method::Get, "/one", echo());
+    router.add(Method::Get, "/two", echo());
+
+    const std::string response = serve_and_read(pair, router);
 
     EXPECT_NE(response.find("/one"), std::string::npos);
     EXPECT_NE(response.find("/two"), std::string::npos);
@@ -190,12 +222,74 @@ TEST(ServeConnection, AnswersTwoRequestsOnOneConnection) {
     EXPECT_NE(response.rfind("HTTP/1.1 200 OK"), 0U);
 }
 
+TEST(ServeConnection, AnswersAnUnregisteredPathWithFourOhFour) {
+    auto pair = connected_pair();
+    send_all(pair.first, "GET /missing HTTP/1.1\r\nHost: example.test\r\n\r\n");
+
+    const std::string response = serve_and_read(pair, routing("/here"));
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 404 Not Found");
+    // The body names the status too, so a person reading a terminal gets more
+    // than a blank page.
+    EXPECT_EQ(body_of(response), "404 Not Found\n");
+}
+
+// The distinction the router's path_matched flag exists for: the resource is
+// there, the verb is not, and the client learns something from the difference.
+TEST(ServeConnection, AnswersAKnownPathUnderAnotherMethodWithFourOhFive) {
+    auto pair = connected_pair();
+    send_all(pair.first, "GET /submit HTTP/1.1\r\nHost: example.test\r\n\r\n");
+
+    Router router;
+    router.add(Method::Post, "/submit", echo());
+
+    EXPECT_EQ(status_line(serve_and_read(pair, router)), "HTTP/1.1 405 Method Not Allowed");
+}
+
+// A 404 is not a parse failure. The stream is still synchronised, so the client
+// may ask for something else on the same connection -- which is why the routing
+// statuses carry no connection: close.
+TEST(ServeConnection, KeepsTheConnectionOpenAfterAFourOhFour) {
+    auto pair = connected_pair();
+    send_all(pair.first,
+             "GET /missing HTTP/1.1\r\nHost: a.test\r\n\r\n"
+             "GET /here HTTP/1.1\r\nHost: b.test\r\n\r\n");
+
+    const std::string response = serve_and_read(pair, routing("/here"));
+
+    EXPECT_EQ(response.find("HTTP/1.1 404 Not Found"), 0U);
+    EXPECT_NE(response.find("HTTP/1.1 200 OK"), std::string::npos);
+    EXPECT_EQ(response.find("connection: close"), std::string::npos);
+}
+
+// A handler's response reaches the client unaltered but for the length, which is
+// what makes the seam worth having.
+TEST(ServeConnection, SendsWhatTheHandlerReturned) {
+    auto pair = connected_pair();
+    send_all(pair.first, get_root);
+
+    Router router;
+    router.add(Method::Get, "/", [](const Request&) {
+        auto response = text_response(201, "made\n");
+        response.headers.add({"x-from-handler", "yes"});
+        return response;
+    });
+
+    const std::string response = serve_and_read(pair, router);
+
+    // 201 is not in the phrase table, and a handler is still entitled to send it:
+    // the line keeps its space and drops the phrase.
+    EXPECT_EQ(status_line(response), "HTTP/1.1 201 ");
+    EXPECT_NE(response.find("x-from-handler: yes\r\n"), std::string::npos);
+    EXPECT_EQ(body_of(response), "made\n");
+}
+
 // A client that half-closes without sending anything is finished, not broken, so
 // it gets no reply at all -- not even a 400.
 TEST(ServeConnection, WritesNothingWhenTheClientFinishesFirst) {
     auto pair = connected_pair();
 
-    EXPECT_TRUE(serve_and_read(pair).empty());
+    EXPECT_TRUE(serve_and_read(pair, Router{}).empty());
 }
 
 // A failed read is not a bad request: there is no head to reject, and nobody to
@@ -211,7 +305,7 @@ TEST(ServeConnection, WritesNothingWhenTheReadFails) {
 
     {
         Connection conn{std::move(pair.second)};
-        serve_connection(conn);
+        serve_connection(conn, Router{});
     }
 
     std::array<char, 64> buf{};
@@ -225,8 +319,9 @@ TEST(ServeConnection, StopsWhenTheClientIsAlreadyGone) {
     send_all(pair.first, get_root);
     pair.first = Socket{-1};
 
+    const Router router = routing("/");
     Connection conn{std::move(pair.second)};
-    serve_connection(conn);
+    serve_connection(conn, router);
 
     SUCCEED();
 }

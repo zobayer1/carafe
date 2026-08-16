@@ -24,4 +24,8 @@ struct Response {
 // phrase rather than a guess. RFC 7230 allows zero characters there.
 [[nodiscard]] std::string_view status_message(int status) noexcept;
 
+// text/plain with the body attached, which is what a handler writing prose
+// wants and what it would otherwise assemble by hand every time.
+[[nodiscard]] Response text_response(int status, std::string body);
+
 }  // namespace carafe::http

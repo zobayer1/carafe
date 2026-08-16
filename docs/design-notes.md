@@ -395,6 +395,49 @@ does not expose whether it is mid-head, and a peer that has hung up cannot be
 told anything anyway. The case that would justify the distinction is a client
 that half-closes and still reads, which nothing here can produce yet.
 
+## The seam has to hide its own router
+
+`App` owns a `Router`, and `app.hpp` is not allowed to say so. The header is
+public API — the README's rule is that anything under `include/carafe/` is
+something a user may rely on — while `router.hpp` lives in `src/` and is about to
+change shape when path parameters land. Including it would ship `Router`,
+`Match` and `find` as supported surface by accident.
+
+So `App` holds a `std::unique_ptr<server::Router>` behind a forward declaration.
+That is pimpl with the router as its own impl, no extra struct, and it costs
+exactly two out-of-line definitions. `~App()` must be declared in the header and
+defaulted in `app.cpp`, because defaulting it inline would make the compiler emit
+a `delete` of an incomplete type — `std::default_delete` has a `static_assert`
+for precisely that. `App()` moves out of line for the opposite reason: `= default`
+would compile happily and leave `router_` null, since `unique_ptr`'s default
+constructor needs no complete type at all. One fails loudly, the other silently.
+Copy and move are deleted rather than defined: nothing needs either, and a
+moved-from `App` would still look runnable.
+
+What the pimpl hides is `Router` specifically, not the vocabulary. `Handler`,
+`Request` and `Response` stay fully visible, because those are what a handler is
+written against. `Handler` earned its own public header on the way, being named
+by both `app.hpp` and `router.hpp` with neither able to include the other — the
+same two-consumer test `Headers` passed.
+
+Routing also split what "an error" means. `error_response` attached
+`connection: close` to everything, which was right while a malformed head was the
+only failure the server could produce. A 404 is not that: the stream is still
+synchronised and the client may ask for something else on the same connection.
+So it became `parse_error_response`, and the rename is the point — leaving the
+old name would have let the next person reach for it on the routing path and
+quietly kill keep-alive for every missing page.
+
+`text_response` moved from `serve.cpp` into the public header at the same time.
+The response note said it would graduate once routing gave it a second caller;
+routing did, and without it every handler in the example would assemble the same
+four lines by hand.
+
+One conformance gap is recorded rather than fixed. RFC 9110 says a 405 MUST carry
+an `Allow` header naming the methods the path does support, and carafe sends
+none. Supplying it means `Router` reporting the set, which is a change to `Match`
+that belongs in its own commit rather than bolted onto the wiring.
+
 ## Not matching is two different answers
 
 `Router::find` returns a handler pointer and a `path_matched` flag, because a
