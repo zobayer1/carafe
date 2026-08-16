@@ -8,14 +8,15 @@
 
 namespace carafe::net {
 
-// Result of accept() on a listening socket. The client socket is optional because
-// accept() can fail, and the os_error is the errno at that failure.
+// One failure channel, so os_error alone answers whether this worked -- the same
+// test ReadResult and WriteResult use. `client` is engaged exactly when os_error
+// is zero, but saying so twice would invite the two to disagree.
 struct AcceptResult {
     int os_error = 0;
     std::optional<Socket> client;
 
     [[nodiscard]] explicit operator bool() const noexcept {
-        return client.has_value();
+        return os_error == 0;
     }
 };
 

@@ -394,3 +394,39 @@ head is reported as a finished connection, not a bad request. `RequestReader`
 does not expose whether it is mid-head, and a peer that has hung up cannot be
 told anything anyway. The case that would justify the distinction is a client
 that half-closes and still reads, which nothing here can produce yet.
+
+## App is the seam, and it is deliberately thin
+
+Writing the first example forced the first public API decision, because nothing
+public could run a server: `Listener`, `Socket` and `Connection` all live in
+`src/`, and the README's boundary rule says only tests cross it. An example that
+included internal headers would be demonstrating unsupported API to exactly the
+people most likely to copy it. So `carafe::App` exists — the Flask-shaped entry
+point the roadmap was always heading for, in its smallest honest form.
+
+Everything with a decision in it lives below the seam. `serve_connection` does
+the read-answer-repeat work and is tested over a `socketpair`; `App::run` is the
+listen-and-accept loop and is not tested at all. That split is the point: the
+untestable part is ten lines of glue with one branch, and it exists so that the
+part worth testing has no listener in it.
+
+`ECONNABORTED` continues the accept loop and every other error ends it. A
+connection dying in the queue before it is taken is routine, while `EBADF` or
+`EINVAL` means the listener is finished and retrying would spin hot on the same
+error. This is the caller the accept note predicted would eventually justify an
+`AcceptError` enum — and one caller with one special case still does not, so a
+bare `errno` comparison is the right size for now.
+
+Two limits are known rather than handled. `EMFILE` ends the server, though it is
+transient: continuing would busy-loop, and doing better needs a backoff this has
+no reason to grow yet. And connections are served serially with keep-alive on, so
+a client that holds a connection open locks everyone else out. Both are the
+concurrency milestone's motivation rather than oversights, and the example says
+so in its own comment.
+
+A smaller consequence, recorded because it cost a debugging round: switching
+`AcceptResult::operator bool` to test `os_error` made `clang-tidy` lose its proof
+that `*accepted.client` is safe, since the old spelling *was* the proof. The
+habit that follows is worth keeping — at a dereference site, test the optional
+rather than the result. `operator bool` answers "did it work", which is a
+different question from "is there a payload here".

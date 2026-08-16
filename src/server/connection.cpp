@@ -36,4 +36,8 @@ ConnectionResult Connection::next_request() {
     }
 }
 
+net::WriteResult Connection::write(std::string_view bytes) {
+    return socket_.write(bytes);
+}
+
 }  // namespace carafe::server

@@ -7,6 +7,7 @@
 
 #include <array>
 #include <optional>
+#include <string_view>
 
 namespace carafe::server {
 
@@ -32,6 +33,10 @@ public:
     explicit Connection(net::Socket socket);
 
     [[nodiscard]] ConnectionResult next_request();
+
+    // Straight to the socket: a response touches no parser state, so this cannot
+    // disturb a partially received next request sitting in the reader.
+    [[nodiscard]] net::WriteResult write(std::string_view bytes);
 
 private:
     net::Socket socket_;

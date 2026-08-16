@@ -33,6 +33,7 @@ set(CARAFE_TEST_SOURCES
     net/listener_test.cpp
     net/socket_test.cpp
     server/connection_test.cpp
+    server/serve_test.cpp
     version_test.cpp
 )
 

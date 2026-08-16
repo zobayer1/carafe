@@ -6,6 +6,7 @@
 #include <array>
 #include <cerrno>
 #include <chrono>
+#include <cstddef>
 #include <string_view>
 #include <thread>
 #include <utility>
@@ -43,6 +44,7 @@ void send_all(const Socket& sock, std::string_view bytes) {
 }
 
 constexpr std::string_view get_root = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
+constexpr std::string_view no_content = "HTTP/1.1 204 No Content\r\n\r\n";
 
 TEST(Connection, ReturnsTheRequestOnceTheHeadIsComplete) {
     auto pair = connected_pair();
@@ -145,6 +147,51 @@ TEST(Connection, TreatsAHeadCutShortAsAFinishedConnection) {
 
     EXPECT_TRUE(result);
     EXPECT_FALSE(result.request.has_value());
+}
+
+TEST(Connection, WritesStraightToTheSocket) {
+    auto pair = connected_pair();
+    Connection conn{std::move(pair.second)};
+
+    ASSERT_TRUE(conn.write(no_content));
+
+    std::array<char, 64> buf{};
+    const ssize_t received = ::recv(pair.first.get(), buf.data(), buf.size(), 0);
+    ASSERT_GT(received, 0);
+    EXPECT_EQ(std::string_view(buf.data(), static_cast<std::size_t>(received)), no_content);
+}
+
+// What the header claims: writing goes to the socket without touching parser
+// state, so a request already buffered behind the first is still there after.
+TEST(Connection, WritingBetweenRequestsLeavesTheSecondIntact) {
+    auto pair = connected_pair();
+    send_all(pair.first,
+             "GET /one HTTP/1.1\r\nHost: a.test\r\n\r\n"
+             "GET /two HTTP/1.1\r\nHost: b.test\r\n\r\n");
+
+    Connection conn{std::move(pair.second)};
+
+    const auto first = conn.next_request();
+    ASSERT_TRUE(first.request.has_value());
+    EXPECT_EQ(first.request->target, "/one");
+
+    ASSERT_TRUE(conn.write(no_content));
+
+    const auto second = conn.next_request();
+    ASSERT_TRUE(second.request.has_value());
+    EXPECT_EQ(second.request->target, "/two");
+}
+
+// The signal a serving loop stops on: answering a client that has already gone.
+TEST(Connection, ReportsTheErrnoWhenTheWriteFails) {
+    auto pair = connected_pair();
+    pair.first = Socket{-1};
+
+    Connection conn{std::move(pair.second)};
+    const auto result = conn.write(no_content);
+
+    EXPECT_FALSE(result);
+    EXPECT_EQ(result.os_error, EPIPE);
 }
 
 // A read failure travels in os_error, and never as a parse error: there is no

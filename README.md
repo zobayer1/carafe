@@ -6,10 +6,11 @@ requests, responses, and not much else.
 This is a learning project, built from the socket up rather than on top of an
 existing HTTP library. It is not production software.
 
-**Status:** a complete request head parser — bytes in, a `Request` out — and a
-socket that binds, listens, accepts one connection at a time, and moves bytes in
-both directions. A `Connection` now joins the two, turning an accepted socket
-into successive requests. Nothing answers them yet, and there is no body.
+**Status:** it serves. `make run` starts a server that answers every request with
+the same text response and gives malformed heads their proper statuses — 400,
+414, 431, 501, 505. Connections are kept alive and handled one at a time. There
+are no routes, no handlers and no request body yet, so every path gets the same
+answer.
 
 ## Goals
 
@@ -36,7 +37,7 @@ Optional: `ccache` (used automatically if present), `clang-format`, `clang-tidy`
 ```sh
 make            # list the available targets
 make test       # configure, build, and run the test suite
-make run        # build and run the hello example
+make run        # serve on http://localhost:8080 until interrupted
 ```
 
 The Makefile is only a shortcut layer — it holds no build settings of its own
@@ -65,7 +66,7 @@ make PRESET=release test
 | `configure`    | Configure the current preset                            |
 | `build`        | Build the current preset, configuring first if needed   |
 | `test`         | Build, then run the suite through CTest                 |
-| `run`          | Build and run the `hello` example                       |
+| `run`          | Serve on port 8080 until interrupted (Ctrl-C)           |
 | `debug`        | Build + test the `debug` preset                         |
 | `release`      | Build + test the `release` preset                       |
 | `asan`         | Build + test with AddressSanitizer + UBSan              |
