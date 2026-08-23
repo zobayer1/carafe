@@ -433,10 +433,11 @@ The response note said it would graduate once routing gave it a second caller;
 routing did, and without it every handler in the example would assemble the same
 four lines by hand.
 
-One conformance gap is recorded rather than fixed. RFC 9110 says a 405 MUST carry
-an `Allow` header naming the methods the path does support, and carafe sends
-none. Supplying it means `Router` reporting the set, which is a change to `Match`
-that belongs in its own commit rather than bolted onto the wiring.
+One conformance gap was left open here rather than bolted onto the wiring. RFC
+9110 says a 405 MUST carry an `Allow` header naming the methods the path does
+support, and this commit sent none, because supplying it meant `Router` reporting
+a set and that is a change to the routing interface. It landed in the next
+commit; see *Refusing a method means naming the ones that work*.
 
 ## Not matching is two different answers
 
@@ -565,3 +566,55 @@ that `*accepted.client` is safe, since the old spelling *was* the proof. The
 habit that follows is worth keeping — at a dereference site, test the optional
 rather than the result. `operator bool` answers "did it work", which is a
 different question from "is there a payload here".
+
+## Refusing a method means naming the ones that work
+
+RFC 9110 makes `Allow` on a 405 a MUST, not a courtesy, and the reason is
+practical: a bare 405 leaves the client to rediscover the interface one verb at a
+time. So `Router` grew `allowed_methods(target)` and the responder turns what it
+returns into a header.
+
+The set is a second query rather than a field on `Match`. Putting it in `Match`
+would have built a vector on every lookup to serve a code that almost never
+fires, and the successful path — the one every request takes — would pay for it.
+A separate call allocates only where the answer is read.
+
+That choice has a cost, and it is the reason `matches` exists. Two functions now
+scan the same table asking the same question, and today that question is
+`pattern == path`, which is barely a function at all. It stops being barely a
+function the moment path parameters land, and two copies of a pattern matcher
+that must agree is exactly the bug this project would rather not write. Factoring
+it was the mitigation that made the second-query trade defensible; skipping it
+would have taken the cost without it. It takes two `string_view`s rather than a
+`const Route&` for the ordinary reason that `Route` is private and nested, but
+also the better one: what it decides is about paths, not routes.
+
+`allowed_methods` lists HEAD wherever GET is registered, because `find` really
+does answer HEAD from a GET route. The two have to agree — an `Allow` naming a
+method the router would then refuse is worse than no header at all, since the
+client has no way to tell it was lied to except by trying. HEAD derives from GET
+and from nothing else: a bodiless POST is not a thing, and the fallback in `find`
+tests for GET specifically. OPTIONS is the opposite trap. RFC 9110 lets a server
+support it, plenty do, and carafe does not — so it must not appear, however
+conventional it looks.
+
+The header goes on the 405 and not on the 404. The field names the methods of a
+resource, and a path with no routes has no resource to describe; an empty `allow:`
+would assert that something is there and serves nothing.
+
+`method_name` sits in `request.hpp` beside the `Method` enum, and it got there by
+being written in the wrong place first. It began in `serve.cpp`'s anonymous
+namespace, on the argument that the header assembly was its only caller and the
+layering read well — the router says which methods, the responder says how they
+are spelled. Coverage disagreed. A table of nine string literals is exactly where
+a typo hides, and hidden in `serve.cpp` the only way to reach an entry was to
+register that method and request a different one: at most eight names per test,
+never the fallback, and five of them uncovered in practice. Testability is a
+caller, and it wanted the function somewhere a test could name it.
+
+`status_message` was the precedent that should have settled it earlier. Same
+shape, same risk, and it is public with a nine-line test pinning every phrase —
+while every one of its non-test callers is internal. So "only internal callers"
+was never what kept a function out of `include/` here, and the rule the two now
+share is the honest one: a vocabulary function over a public type belongs with
+the type.

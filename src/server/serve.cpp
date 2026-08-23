@@ -8,7 +8,9 @@
 #include "server/router.hpp"
 
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace carafe::server {
 
@@ -55,6 +57,31 @@ http::Response parse_error_response(http::RequestError error) {
     return response;
 }
 
+// Comma-separated, as RFC 9110 spells the field. Method names are case-sensitive
+// tokens: these stay uppercase even though every field name we emit is lowered.
+std::string allow_value(const std::vector<http::Method>& methods) {
+    std::string value;
+    for (const http::Method method : methods) {
+        if (!value.empty()) {
+            value += ", ";
+        }
+        value += http::method_name(method);
+    }
+    return value;
+}
+
+// A path nobody registered is a 404; one registered under another method is a
+// 405, and RFC 9110 makes Allow on that 405 a MUST rather than a courtesy.
+http::Response unmatched_response(const Router& router, std::string_view target,
+                                  bool path_matched) {
+    if (!path_matched) {
+        return status_response(404);
+    }
+    http::Response response = status_response(405);
+    response.headers.add({"allow", allow_value(router.allowed_methods(target))});
+    return response;
+}
+
 }  // namespace
 
 void serve_connection(Connection& conn, const Router& router) {
@@ -78,11 +105,9 @@ void serve_connection(Connection& conn, const Router& router) {
         const http::Request& request = *result.request;
         const auto match = router.find(request.method, request.target);
 
-        // A path nobody registered is a 404; one registered under another method
-        // is a 405, and the client learns something real from the difference.
-        const int unmatched = match.path_matched ? 405 : 404;
         const http::Response response =
-            match ? (*match.handler)(request) : status_response(unmatched);
+            match ? (*match.handler)(request)
+                  : unmatched_response(router, request.target, match.path_matched);
 
         if (!conn.write(response.serialize(request.method != http::Method::Head))) {
             return;  // nobody left to answer

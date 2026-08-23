@@ -3,9 +3,11 @@
 #include <carafe/http/handler.hpp>
 #include <carafe/http/request.hpp>
 
+#include <algorithm>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace carafe::server {
 
@@ -14,6 +16,16 @@ namespace {
 // arrive -- clients strip them before sending -- so '?' is the only cut.
 std::string_view path_of(std::string_view target) noexcept {
     return target.substr(0, target.find('?'));
+}
+
+// One definition of what "this route serves this path" means, because find()
+// and allowed_methods() must never disagree about it.
+bool matches(std::string_view pattern, std::string_view path) noexcept {
+    return pattern == path;
+}
+
+bool contains(const std::vector<http::Method>& methods, http::Method method) {
+    return std::find(methods.begin(), methods.end(), method) != methods.end();
 }
 
 }  // namespace
@@ -28,7 +40,7 @@ Match Router::find(http::Method method, std::string_view target) const {
     bool path_matched = false;
 
     for (const Route& route : routes_) {
-        if (route.path != path) {
+        if (!matches(route.path, path)) {
             continue;
         }
 
@@ -50,6 +62,28 @@ Match Router::find(http::Method method, std::string_view target) const {
         return {&fallback->handler, true};
     }
     return {nullptr, path_matched};
+}
+
+std::vector<http::Method> Router::allowed_methods(std::string_view target) const {
+    const std::string_view path = path_of(target);
+    std::vector<http::Method> allowed;
+
+    for (const Route& route : routes_) {
+        if (!matches(route.path, path)) {
+            continue;
+        }
+
+        if (!contains(allowed, route.method)) {
+            allowed.push_back(route.method);
+        }
+
+        // Listed beside the Get that implies it rather than appended, so the order
+        // still reads as the order the routes were registered in.
+        if (route.method == http::Method::Get && !contains(allowed, http::Method::Head)) {
+            allowed.push_back(http::Method::Head);
+        }
+    }
+    return allowed;
 }
 
 }  // namespace carafe::server

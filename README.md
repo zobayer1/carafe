@@ -7,7 +7,8 @@ This is a learning project, built from the socket up rather than on top of an
 existing HTTP library. It is not production software.
 
 **Status:** it routes. `make run` starts a server with two registered routes;
-anything else gets a 404, and a known path under the wrong method a 405.
+anything else gets a 404, and a known path under the wrong method a 405 naming
+the methods that would have worked.
 Malformed heads still get their proper statuses — 400, 414, 431, 501, 505.
 Connections are kept alive and handled one at a time. Paths must match exactly,
 and there is no request body yet.
@@ -143,7 +144,7 @@ inherits them automatically and must *not* apply them again.
 - [x] Header block assembly: duplicates, Host, total-head limit
 - [ ] Request body via Content-Length
 - [x] Response building and serialization
-- [x] Routing: static paths matched by method, with 404 and 405
+- [x] Routing: static paths matched by method, with 404 and 405 + `Allow`
 - [x] Handler registration API
 - [ ] Routing: path parameters
 - [ ] Concurrency: thread-per-connection, then a thread pool

@@ -4,8 +4,11 @@
 #include <carafe/http/request.hpp>
 #include <carafe/http/response.hpp>
 
+#include "http/printers.hpp"
+
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -203,6 +206,106 @@ TEST(Router, PassesTheRequestThroughToTheHandler) {
 
     ASSERT_TRUE(match);
     EXPECT_EQ((*match.handler)(request).body, "/echo?q=1");
+}
+
+// The 405 owes the client an Allow header, and these are the methods that go in
+// it. Compared as a whole vector, because order and repetition are both part of
+// what the field says.
+using Methods = std::vector<Method>;
+
+TEST(Router, AllowsNothingForAPathItDoesNotServe) {
+    Router router;
+    router.add(Method::Get, "/hello", answering("hello"));
+
+    EXPECT_EQ(router.allowed_methods("/missing"), Methods{});
+    EXPECT_EQ(Router{}.allowed_methods("/hello"), Methods{});
+}
+
+// One method registered means one method allowed: nothing is assumed for a path
+// just because it exists.
+TEST(Router, AllowsOnlyTheMethodRegistered) {
+    Router router;
+    router.add(Method::Post, "/submit", answering("submit"));
+
+    EXPECT_EQ(router.allowed_methods("/submit"), Methods{Method::Post});
+}
+
+// find() answers HEAD from a GET route, so Allow has to say so -- otherwise the
+// field contradicts what the next request would actually get.
+TEST(Router, AllowsHeadWhereverGetIsAllowed) {
+    Router router;
+    router.add(Method::Get, "/hello", answering("hello"));
+
+    EXPECT_EQ(router.allowed_methods("/hello"), (Methods{Method::Get, Method::Head}));
+}
+
+// Head follows the Get that implies it rather than trailing the list, so the
+// order still reads as the order the routes were registered in.
+TEST(Router, ListsMethodsInRegistrationOrder) {
+    Router router;
+    router.add(Method::Get, "/thing", answering("get"));
+    router.add(Method::Post, "/thing", answering("post"));
+    router.add(Method::Delete, "/thing", answering("delete"));
+
+    EXPECT_EQ(router.allowed_methods("/thing"),
+              (Methods{Method::Get, Method::Head, Method::Post, Method::Delete}));
+}
+
+TEST(Router, ListsAMethodOnceHoweverOftenItIsRegistered) {
+    Router router;
+    router.add(Method::Get, "/hello", answering("first"));
+    router.add(Method::Get, "/hello", answering("second"));
+
+    EXPECT_EQ(router.allowed_methods("/hello"), (Methods{Method::Get, Method::Head}));
+}
+
+// Two ways to arrive at Head -- the Get fallback and an explicit route -- and
+// they must not both put it in the list.
+TEST(Router, ListsHeadOnceWhenItIsRegisteredAlongsideGet) {
+    Router before;
+    before.add(Method::Get, "/hello", answering("get"));
+    before.add(Method::Head, "/hello", answering("head"));
+
+    Router after;
+    after.add(Method::Head, "/hello", answering("head"));
+    after.add(Method::Get, "/hello", answering("get"));
+
+    EXPECT_EQ(before.allowed_methods("/hello"), (Methods{Method::Get, Method::Head}));
+    EXPECT_EQ(after.allowed_methods("/hello"), (Methods{Method::Head, Method::Get}));
+}
+
+// Head is GET without the body and nothing else: a bodiless POST is not a thing
+// the router may invent.
+TEST(Router, DoesNotAllowHeadForMethodsOtherThanGet) {
+    Router router;
+    router.add(Method::Post, "/a", answering("post"));
+    router.add(Method::Put, "/b", answering("put"));
+    router.add(Method::Delete, "/c", answering("delete"));
+
+    EXPECT_EQ(router.allowed_methods("/a"), Methods{Method::Post});
+    EXPECT_EQ(router.allowed_methods("/b"), Methods{Method::Put});
+    EXPECT_EQ(router.allowed_methods("/c"), Methods{Method::Delete});
+}
+
+TEST(Router, AllowsPerPathRatherThanAcrossTheTable) {
+    Router router;
+    router.add(Method::Get, "/one", answering("one"));
+    router.add(Method::Post, "/two", answering("two"));
+
+    EXPECT_EQ(router.allowed_methods("/one"), (Methods{Method::Get, Method::Head}));
+    EXPECT_EQ(router.allowed_methods("/two"), Methods{Method::Post});
+}
+
+// The same path rule find() uses, since a set of methods for a path find() would
+// never reach is worse than none at all.
+TEST(Router, AllowsAgainstTheSamePathFindMatches) {
+    Router router;
+    router.add(Method::Post, "/hello", answering("post"));
+
+    EXPECT_EQ(router.allowed_methods("/hello?name=x"), Methods{Method::Post});
+    EXPECT_EQ(router.allowed_methods("/hello/"), Methods{});
+    EXPECT_EQ(router.allowed_methods("/Hello"), Methods{});
+    EXPECT_EQ(router.allowed_methods("/hello/more?x=1"), Methods{});
 }
 
 }  // namespace

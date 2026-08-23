@@ -3,6 +3,7 @@
 #include <carafe/http/headers.hpp>
 
 #include <string>
+#include <string_view>
 
 namespace carafe::http {
 
@@ -22,5 +23,7 @@ struct RequestLine {
     std::string target;
     Version version{};
 };
+
+[[nodiscard]] std::string_view method_name(Method method) noexcept;
 
 }  // namespace carafe::http

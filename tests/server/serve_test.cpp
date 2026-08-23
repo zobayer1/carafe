@@ -243,7 +243,59 @@ TEST(ServeConnection, AnswersAKnownPathUnderAnotherMethodWithFourOhFive) {
     Router router;
     router.add(Method::Post, "/submit", echo());
 
-    EXPECT_EQ(status_line(serve_and_read(pair, router)), "HTTP/1.1 405 Method Not Allowed");
+    const std::string response = serve_and_read(pair, router);
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 405 Method Not Allowed");
+    // RFC 9110 makes this a MUST: a 405 that does not say what would have worked
+    // leaves the client guessing one verb at a time.
+    EXPECT_NE(response.find("allow: POST\r\n"), std::string::npos);
+}
+
+// Every method the path serves, in one field, comma-separated -- and HEAD among
+// them, because the GET route really does answer it.
+TEST(ServeConnection, NamesEveryMethodThePathServesOnAFourOhFive) {
+    auto pair = connected_pair();
+    send_all(pair.first, "PUT /thing HTTP/1.1\r\nHost: example.test\r\n\r\n");
+
+    Router router;
+    router.add(Method::Get, "/thing", echo());
+    router.add(Method::Post, "/thing", echo());
+    router.add(Method::Delete, "/thing", echo());
+
+    const std::string response = serve_and_read(pair, router);
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 405 Method Not Allowed");
+    EXPECT_NE(response.find("allow: GET, HEAD, POST, DELETE\r\n"), std::string::npos);
+}
+
+// The field names methods for a resource, so a path that has none has nothing to
+// say -- an empty Allow would claim the resource exists and serves nothing.
+TEST(ServeConnection, SendsNoAllowWithAFourOhFour) {
+    auto pair = connected_pair();
+    send_all(pair.first, "GET /missing HTTP/1.1\r\nHost: example.test\r\n\r\n");
+
+    const std::string response = serve_and_read(pair, routing("/here"));
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 404 Not Found");
+    EXPECT_EQ(response.find("allow:"), std::string::npos);
+}
+
+// HEAD reaches the 405 like any other method when no GET route implies it, and
+// the header still arrives: it is the head that carries the answer.
+TEST(ServeConnection, SendsAllowOnAFourOhFiveToHeadWithoutABody) {
+    auto pair = connected_pair();
+    send_all(pair.first, "HEAD /submit HTTP/1.1\r\nHost: example.test\r\n\r\n");
+
+    Router router;
+    router.add(Method::Post, "/submit", echo());
+
+    const std::string response = serve_and_read(pair, router);
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 405 Method Not Allowed");
+    EXPECT_NE(response.find("allow: POST\r\n"), std::string::npos);
+    // The length still describes the body a GET would have carried.
+    EXPECT_NE(response.find("content-length: 23\r\n"), std::string::npos);
+    EXPECT_TRUE(body_of(response).empty());
 }
 
 // A 404 is not a parse failure. The stream is still synchronised, so the client

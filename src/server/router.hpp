@@ -30,6 +30,11 @@ public:
     void add(http::Method method, std::string path, http::Handler handler);
     [[nodiscard]] Match find(http::Method method, std::string_view target) const;
 
+    // Every method registered for this path, in registration order and without
+    // repeats. Head appears wherever Get does: the fallback answers it, so a client
+    // is entitled to see it listed.
+    [[nodiscard]] std::vector<http::Method> allowed_methods(std::string_view target) const;
+
 private:
     // Private because nothing outside builds one: add() is the only way in.
     struct Route {

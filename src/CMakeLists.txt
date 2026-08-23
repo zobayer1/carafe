@@ -28,6 +28,7 @@ set(CARAFE_SOURCES
     app.cpp
     http/headers.cpp
     http/line_reader.cpp
+    http/request.cpp
     http/request_parser.cpp
     http/request_reader.cpp
     http/response.cpp
