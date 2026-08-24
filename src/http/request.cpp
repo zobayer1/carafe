@@ -1,5 +1,8 @@
 #include <carafe/http/request.hpp>
 
+#include <optional>
+#include <string_view>
+
 namespace carafe::http {
 
 std::string_view method_name(Method method) noexcept {
@@ -24,6 +27,15 @@ std::string_view method_name(Method method) noexcept {
             return "PATCH";
     }
     return "";
+}
+
+std::optional<std::string_view> Params::get(std::string_view name) const noexcept {
+    for (const PathParam& entry : entries) {
+        if (entry.name == name) {
+            return entry.value;
+        }
+    }
+    return std::nullopt;
 }
 
 }  // namespace carafe::http

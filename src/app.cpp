@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <memory>
+#include <string_view>
 #include <utility>
 
 namespace carafe {
@@ -16,8 +17,8 @@ App::App() : router_(std::make_unique<server::Router>()) {}
 
 App::~App() = default;
 
-void App::get(std::string path, http::Handler handler) {
-    router_->add(http::Method::Get, std::move(path), std::move(handler));
+void App::get(std::string_view path, http::Handler handler) {
+    router_->add(http::Method::Get, path, std::move(handler));
 }
 
 bool App::run(std::uint16_t port) {

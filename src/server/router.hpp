@@ -9,6 +9,15 @@
 
 namespace carafe::server {
 
+// One segment of a path pattern: literal text, or the name a capture binds to.
+struct Segment {
+    std::string text;
+    bool is_param = false;
+};
+
+// Split on '/' once, at registration, so matching never re-parses.
+using Pattern = std::vector<Segment>;
+
 // Three outcomes, not two: a path registered under a different method owes the
 // client a 405 rather than a 404, and a null handler alone cannot say which.
 // The handler lives as long as the Router goes unmodified -- add() may
@@ -16,6 +25,10 @@ namespace carafe::server {
 struct Match {
     const http::Handler* handler = nullptr;
     bool path_matched = false;
+
+    // What the pattern captured, empty for a static route. Owned rather than
+    // viewed, so nothing here depends on the target outliving the lookup.
+    http::Params params;
 
     [[nodiscard]] explicit operator bool() const noexcept {
         return handler != nullptr;
@@ -27,7 +40,7 @@ public:
     // Appended, so a path registered twice keeps its first handler: find scans in
     // order. That makes a duplicate harmless rather than an error with no channel
     // to report it on.
-    void add(http::Method method, std::string path, http::Handler handler);
+    void add(http::Method method, std::string_view path, http::Handler handler);
     [[nodiscard]] Match find(http::Method method, std::string_view target) const;
 
     // Every method registered for this path, in registration order and without
@@ -39,7 +52,7 @@ private:
     // Private because nothing outside builds one: add() is the only way in.
     struct Route {
         http::Method method;
-        std::string path;
+        Pattern pattern;
         http::Handler handler;
     };
 

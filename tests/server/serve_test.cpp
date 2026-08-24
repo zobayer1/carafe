@@ -37,9 +37,9 @@ Handler echo() {
     };
 }
 
-Router routing(std::string path) {
+Router routing(std::string_view path) {
     Router router;
-    router.add(Method::Get, std::move(path), echo());
+    router.add(Method::Get, path, echo());
     return router;
 }
 

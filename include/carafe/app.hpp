@@ -4,7 +4,7 @@
 
 #include <cstdint>
 #include <memory>
-#include <string>
+#include <string_view>
 
 namespace carafe::server {
 class Router;
@@ -28,7 +28,7 @@ public:
 
     // A path answers only the method it was registered for, and only the first
     // handler given for it.
-    void get(std::string path, http::Handler handler);
+    void get(std::string_view path, http::Handler handler);
 
     // Serves requests on `port`. Returns only on failure -- false if the port
     // could not be bound, or if accepting stopped for a reason retrying would

@@ -308,4 +308,209 @@ TEST(Router, AllowsAgainstTheSamePathFindMatches) {
     EXPECT_EQ(router.allowed_methods("/hello/more?x=1"), Methods{});
 }
 
+// Path parameters. A pattern segment written <name> stands for any one segment
+// and remembers what stood there; everything above still has to hold unchanged.
+
+TEST(Router, FindsAHandlerThroughAPathParameter) {
+    Router router;
+    router.add(Method::Get, "/users/<id>", answering("user"));
+
+    const Match match = router.find(Method::Get, "/users/42");
+
+    EXPECT_TRUE(match);
+    EXPECT_TRUE(match.path_matched);
+    EXPECT_EQ(answer_of(match), "user");
+}
+
+TEST(Router, CapturesTheSegmentAParameterStoodFor) {
+    Router router;
+    router.add(Method::Get, "/users/<id>", answering("user"));
+
+    const Match match = router.find(Method::Get, "/users/42");
+
+    ASSERT_TRUE(match);
+    EXPECT_EQ(match.params.get("id"), "42");
+}
+
+// The name comes from the pattern, not from anything the client sent, so asking
+// for the literal text of the segment finds nothing.
+TEST(Router, CapturesUnderTheNameThePatternGave) {
+    Router router;
+    router.add(Method::Get, "/users/<id>", answering("user"));
+
+    const Match match = router.find(Method::Get, "/users/42");
+
+    ASSERT_TRUE(match);
+    EXPECT_FALSE(match.params.get("42").has_value());
+    EXPECT_FALSE(match.params.get("users").has_value());
+}
+
+TEST(Router, CapturesEveryParameterInThePattern) {
+    Router router;
+    router.add(Method::Get, "/users/<id>/posts/<slug>", answering("post"));
+
+    const Match match = router.find(Method::Get, "/users/7/posts/hello");
+
+    ASSERT_TRUE(match);
+    EXPECT_EQ(match.params.get("id"), "7");
+    EXPECT_EQ(match.params.get("slug"), "hello");
+    EXPECT_EQ(match.params.entries.size(), 2U);
+}
+
+TEST(Router, CapturesNothingForAStaticRoute) {
+    Router router;
+    router.add(Method::Get, "/hello", answering("hello"));
+
+    const Match match = router.find(Method::Get, "/hello");
+
+    ASSERT_TRUE(match);
+    EXPECT_TRUE(match.params.entries.empty());
+}
+
+// A parameter binds one segment, not a tail: the slash is a boundary it cannot
+// reach across, in either direction.
+TEST(Router, BindsAParameterToOneSegmentOnly) {
+    Router router;
+    router.add(Method::Get, "/users/<id>", answering("user"));
+
+    EXPECT_FALSE(router.find(Method::Get, "/users/42/posts"));
+    EXPECT_FALSE(router.find(Method::Get, "/users"));
+    EXPECT_FALSE(router.find(Method::Get, "/42"));
+}
+
+// Nothing is not a value, so a parameter refuses an empty segment rather than
+// binding an empty string a handler could not tell from a missing one.
+TEST(Router, DoesNotBindAParameterToAnEmptySegment) {
+    Router router;
+    router.add(Method::Get, "/users/<id>", answering("user"));
+
+    EXPECT_FALSE(router.find(Method::Get, "/users/"));
+    EXPECT_FALSE(router.find(Method::Get, "/users//"));
+}
+
+TEST(Router, MatchesAParameterInTheMiddleOfAPath) {
+    Router router;
+    router.add(Method::Get, "/users/<id>/edit", answering("edit"));
+
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/users/42/edit")), "edit");
+    EXPECT_FALSE(router.find(Method::Get, "/users/42/delete"));
+}
+
+// The query is cut before matching, so it can neither be captured nor make a
+// parameterised route match a path it does not describe.
+TEST(Router, CapturesThePathWithoutTheQuery) {
+    Router router;
+    router.add(Method::Get, "/users/<id>", answering("user"));
+
+    const Match match = router.find(Method::Get, "/users/42?fields=name");
+
+    ASSERT_TRUE(match);
+    EXPECT_EQ(match.params.get("id"), "42");
+}
+
+// Registration order decides, exactly as it does for two identical static
+// paths. A literal route must be registered before the pattern that swallows it.
+TEST(Router, TakesTheFirstPatternThatMatches) {
+    Router literal_first;
+    literal_first.add(Method::Get, "/users/me", answering("me"));
+    literal_first.add(Method::Get, "/users/<id>", answering("by-id"));
+
+    Router pattern_first;
+    pattern_first.add(Method::Get, "/users/<id>", answering("by-id"));
+    pattern_first.add(Method::Get, "/users/me", answering("me"));
+
+    EXPECT_EQ(answer_of(literal_first.find(Method::Get, "/users/me")), "me");
+    EXPECT_EQ(answer_of(literal_first.find(Method::Get, "/users/42")), "by-id");
+    EXPECT_EQ(answer_of(pattern_first.find(Method::Get, "/users/me")), "by-id");
+}
+
+// A parameter with no name is one no handler could ever ask for, so <> stays
+// the literal text it looks like rather than becoming a capture.
+TEST(Router, TreatsAnEmptyParameterNameAsLiteralText) {
+    Router router;
+    router.add(Method::Get, "/users/<>", answering("literal"));
+
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/users/<>")), "literal");
+    EXPECT_FALSE(router.find(Method::Get, "/users/42"));
+}
+
+// Both brackets are required, so a segment carrying only one of them is text.
+// Neither character can arrive in a real request target -- RFC 3986 excludes
+// them from a path -- which is exactly why they are safe to spell patterns with.
+TEST(Router, TreatsAHalfBracketedSegmentAsLiteralText) {
+    Router router;
+    router.add(Method::Get, "/users/<id", answering("open"));
+    router.add(Method::Get, "/users/id>", answering("close"));
+
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/users/<id")), "open");
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/users/id>")), "close");
+    EXPECT_FALSE(router.find(Method::Get, "/users/42"));
+}
+
+// Odd rather than wrong, and add() has no channel to refuse it on. Both are
+// captured and get() answers with the first, as it does for repeated headers.
+TEST(Router, CapturesBothWhenAPatternBindsOneNameTwice) {
+    Router router;
+    router.add(Method::Get, "/pair/<id>/<id>", answering("pair"));
+
+    const Match match = router.find(Method::Get, "/pair/first/second");
+
+    ASSERT_TRUE(match);
+    EXPECT_EQ(match.params.entries.size(), 2U);
+    EXPECT_EQ(match.params.get("id"), "first");
+}
+
+// The fallback is remembered a pass of the loop before it is returned, and the
+// captures have to be remembered with it -- they cannot be recomputed later.
+TEST(Router, HeadKeepsTheCapturesOfTheGetRouteItFallsBackTo) {
+    Router router;
+    router.add(Method::Get, "/users/<id>", answering("get"));
+
+    const Match match = router.find(Method::Head, "/users/42");
+
+    ASSERT_TRUE(match);
+    EXPECT_EQ(answer_of(match), "get");
+    EXPECT_EQ(match.params.get("id"), "42");
+}
+
+// Several patterns match this path, so the captures have to be the ones taken
+// against the route that actually answered rather than whichever matched last.
+TEST(Router, HeadKeepsTheCapturesOfTheRouteThatAnswers) {
+    Router router;
+    router.add(Method::Post, "/users/<posted>", answering("post"));
+    router.add(Method::Get, "/users/<fetched>", answering("get"));
+    router.add(Method::Delete, "/users/<removed>", answering("delete"));
+
+    const Match match = router.find(Method::Head, "/users/42");
+
+    ASSERT_TRUE(match);
+    EXPECT_EQ(answer_of(match), "get");
+    EXPECT_EQ(match.params.get("fetched"), "42");
+    EXPECT_FALSE(match.params.get("posted").has_value());
+    EXPECT_FALSE(match.params.get("removed").has_value());
+}
+
+// A 405 on a parameterised path owes the same Allow header a static one does,
+// which is what one shared definition of matching buys.
+TEST(Router, AllowsTheMethodsRegisteredForAPattern) {
+    Router router;
+    router.add(Method::Get, "/users/<id>", answering("get"));
+    router.add(Method::Delete, "/users/<id>", answering("delete"));
+
+    EXPECT_EQ(router.allowed_methods("/users/42"),
+              (Methods{Method::Get, Method::Head, Method::Delete}));
+    EXPECT_EQ(router.allowed_methods("/users/42/posts"), Methods{});
+}
+
+// Allow answers about a concrete path, not about a pattern, so two patterns
+// that both serve it contribute to one list however they spell their names.
+TEST(Router, AllowsAcrossEveryPatternThatServesThePath) {
+    Router router;
+    router.add(Method::Get, "/users/<id>", answering("get"));
+    router.add(Method::Post, "/users/<name>", answering("post"));
+
+    EXPECT_EQ(router.allowed_methods("/users/42"),
+              (Methods{Method::Get, Method::Head, Method::Post}));
+}
+
 }  // namespace
