@@ -86,7 +86,7 @@ http::Response unmatched_response(const Router& router, std::string_view target,
 
 void serve_connection(Connection& conn, const Router& router) {
     while (true) {
-        const auto result = conn.next_request();
+        auto result = conn.next_request();
 
         if (!result) {
             // Answerable or not, the connection ends here: the byte stream cannot
@@ -102,8 +102,12 @@ void serve_connection(Connection& conn, const Router& router) {
             return;  // the client finished
         }
 
-        const http::Request& request = *result.request;
-        const auto match = router.find(request.method, request.target);
+        http::Request& request = *result.request;
+        auto match = router.find(request.method, request.target);
+
+        // Whatever the router bound, unconditionally: an unmatched request captured
+        // nothing, so this costs an empty vector rather than a branch.
+        request.params = std::move(match.params);
 
         const http::Response response =
             match ? (*match.handler)(request)

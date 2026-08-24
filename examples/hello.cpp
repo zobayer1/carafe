@@ -1,5 +1,6 @@
 // The smallest thing that proves the socket, the parser, the router and the
-// responder are joined up: two routes, and a 404 for everything else.
+// responder are joined up: three routes, one of them bound to a path
+// parameter, and a 404 for everything else.
 //
 // Connections are served one at a time, to completion, and kept alive until the
 // client hangs up -- so a browser holding a connection open locks everyone else
@@ -37,11 +38,19 @@ int main() {
         return text_response(200, std::move(body));
     });
 
+    app.get("/hello/<name>", [](const Request& request) {
+        std::string body = "hello, ";
+        body += request.params.get("name").value_or("world");
+        body += "!\n";
+        return text_response(200, std::move(body));
+    });
+
     // Flushed, because run() blocks immediately afterwards and a piped stdout
     // would otherwise hold this until the process ends.
     std::cout << "carafe " << carafe::version() << " serving on http://localhost:" << port
               << "\ntry:  curl -i http://localhost:" << port << '/'
               << "\n      curl -i http://localhost:" << port << "/hello"
+              << "\n      curl -i http://localhost:" << port << "/hello/world"
               << "\n      curl -i http://localhost:" << port << "/missing\n"
               << std::flush;
 

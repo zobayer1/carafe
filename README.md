@@ -6,17 +6,22 @@ requests, responses, and not much else.
 This is a learning project, built from the socket up rather than on top of an
 existing HTTP library. It is not production software.
 
-**Status:** it routes. `make run` starts a server with two registered routes;
-anything else gets a 404, and a known path under the wrong method a 405 naming
-the methods that would have worked.
+**Status:** it routes. `make run` starts a server with three registered routes,
+one of them bound to a path parameter; anything else gets a 404, and a known path
+under the wrong method a 405 naming the methods that would have worked.
 Malformed heads still get their proper statuses — 400, 414, 431, 501, 505.
-Connections are kept alive and handled one at a time. Paths must match exactly,
-and there is no request body yet.
+Connections are kept alive and handled one at a time. A parameter binds a single
+path segment, and there is no request body yet.
 
 ```cpp
 carafe::App app;
 app.get("/hello", [](const carafe::http::Request&) {
     return carafe::http::text_response(200, "hello\n");
+});
+app.get("/hello/<name>", [](const carafe::http::Request& request) {
+    std::string body = "hello, ";
+    body += request.params.get("name").value_or("world");
+    return carafe::http::text_response(200, body + "!\n");
 });
 app.run(8080);
 ```
@@ -146,7 +151,8 @@ inherits them automatically and must *not* apply them again.
 - [x] Response building and serialization
 - [x] Routing: static paths matched by method, with 404 and 405 + `Allow`
 - [x] Handler registration API
-- [ ] Routing: path parameters
+- [x] Routing: path parameters, one segment each
+- [ ] Routing: typed and multi-segment parameters, percent-decoded values
 - [ ] Concurrency: thread-per-connection, then a thread pool
 - [ ] Middleware
 - [ ] Keep-alive, chunked transfer encoding

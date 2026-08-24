@@ -32,6 +32,10 @@ struct Request {
     std::string target;
     Version version{};
     Headers headers;
+
+    // Bound by the Router after the head is parsed, not by the parser.
+    // Empty for a static route, and for a request no route claimed.
+    Params params;
 };
 
 struct RequestLine {

@@ -399,9 +399,10 @@ that half-closes and still reads, which nothing here can produce yet.
 
 `App` owns a `Router`, and `app.hpp` is not allowed to say so. The header is
 public API — the README's rule is that anything under `include/carafe/` is
-something a user may rely on — while `router.hpp` lives in `src/` and is about to
-change shape when path parameters land. Including it would ship `Router`,
-`Match` and `find` as supported surface by accident.
+something a user may rely on — while `router.hpp` lives in `src/` and changed
+shape as soon as path parameters landed: `Route` stopped storing a path and
+started storing a compiled pattern, and `Match` grew a field. Including it would
+have shipped `Router`, `Match` and `find` as supported surface by accident.
 
 So `App` holds a `std::unique_ptr<server::Router>` behind a forward declaration.
 That is pimpl with the router as its own impl, no extra struct, and it costs
@@ -618,3 +619,101 @@ while every one of its non-test callers is internal. So "only internal callers"
 was never what kept a function out of `include/` here, and the rule the two now
 share is the honest one: a vocabulary function over a public type belongs with
 the type.
+
+## A pattern is compiled once, and a request path never is
+
+`Route` stores a `Pattern` — a vector of `Segment`, each either literal text or
+the name a capture binds to — built by `add` at registration. Matching walks
+pattern and path in lockstep, cutting the path on `/` as it goes, and never
+re-parses the pattern it was handed.
+
+The tempting symmetry is to compile the request path too and compare the two
+vectors. It is wrong twice over. It allocates a string per segment per route per
+request, on the hot path, to answer a question that needs no allocation at all
+when a route fails on its first segment. And it reads `<id>` in an incoming path
+as syntax, when a request path is data: a client asking literally for
+`/users/<id>` must not be treated as having written a pattern. Matching is
+asymmetric even though equality is not.
+
+`Segment` owns a `std::string` rather than viewing into the registered path, and
+that is not a style preference. Routes live in a `vector` that reallocates, and
+even without reallocation a moved `Route` moves its `std::string` — which for a
+short string means SSO copies the bytes into the new object's inline buffer and
+leaves every view pointing at the dead original. A view into stored text is safe
+only when the text has a stable address, and nothing here gives it one.
+
+`Segment` and `Pattern` sit at namespace scope in `router.hpp` rather than nested
+inside `Router`. `matches` and `compile` are free functions in `router.cpp`'s
+anonymous namespace and have to name `Segment` in their signatures, which a
+private nested type forbids. `Route` stays private and nested, because `add` is
+the only way to build one.
+
+One `matches` serves both `find` and `allowed_methods`, which is what makes a 405
+on a parameterised path come out right without a line of extra work. It also has
+to. Two definitions of "this route serves this path" would eventually disagree,
+and the shape of that failure is an `Allow` header naming a method the router
+then refuses — worse than no header, because the client acts on it.
+
+## A parameter stands for exactly one segment, and never for nothing
+
+`/users/<id>` matches `/users/42` and not `/users/42/posts`, because the walk
+requires pattern and path to run out together. It also does not match `/users/`.
+A parameter that bound the empty string would hand every handler an `id` naming
+no user and make the same guard everyone's problem, so an empty piece is a
+failure to match — and `/users/` is then a 404 rather than a 405, since no route
+claimed the path at all. Flask decides both the same way.
+
+The `<name>` syntax cannot collide with a path a conforming client could send:
+RFC 3986 excludes `<` and `>` from a URI path outright, so a literal segment that
+would be misread as a parameter cannot arrive over the wire. `compile` treats a
+half-bracketed segment, and an empty `<>`, as literal text rather than rejecting
+them. That keeps `add` free of an error channel it would otherwise need, and the
+cost is bounded: a pattern that cannot match anything is a mistake its author
+sees the first time they curl it.
+
+Registration order decides between two patterns that both match, exactly as it
+already decided between duplicate static paths — the scan returns on the first
+hit. So a literal `/users/me` has to be registered before `/users/<id>`, or the
+parameter swallows it. Flask's specificity ranking is the alternative, and it is
+a body of rules to learn and explain in exchange for saving one line of ordering.
+
+## No value is not an empty value
+
+`Params::get` returns `std::optional<std::string_view>`, following `Headers::get`
+rather than answering `""` for a name nothing bound. The empty string is not free
+to use as a sentinel here in the way it looks: it means "bound to nothing", and a
+type has to be able to promise that no real value collides with it.
+
+`Router` can make that promise — a parameter binds at least one character, by the
+rule above. `Params` cannot. It is an open aggregate whose `entries` anyone may
+append to, so it has no way to enforce what its values look like, and a `get`
+that returned `""` for both cases would be lying about a guarantee it does not
+own. Closing the struct into a class to make the sentinel honest costs an
+invariant, a constructor, and an error channel `add` would then need — all to
+avoid an `optional` that already says the right thing.
+
+The one deliberate divergence from `Headers::get` is case. Field names are
+case-insensitive because a client picks the spelling and RFC 9110 says the server
+must not care. A parameter name is written twice by the same person, in the
+pattern and in the handler, so `<id>` and `get("ID")` is a typo — and matching it
+would hide the typo rather than the difference.
+
+## The captures ride on the request
+
+`Request` grew a `Params params` member, filled by the router after the head is
+parsed. Every other member came off the wire; this one did not, which is why it
+carries a comment saying so. A reader of `request.hpp` has no other way to tell.
+
+The alternative was a `RoutedRequest` wrapping a `Request` and its captures,
+keeping the parsed request honest about holding only what the client sent. It
+changes every handler signature to gain a distinction handlers do not care about,
+and Flask puts the same thing on the request for the same reason.
+
+`serve_connection` assigns the captures unconditionally rather than only on a
+match, because an unmatched request captured nothing and moving an empty `Params`
+costs less than the branch that would avoid it. That assignment is also what
+keeps a pipelined connection clean: the second request cannot inherit the first
+one's captures, because it is overwritten before any handler sees it. The reader
+resets its `Request` after handing one over, which would guard the same thing,
+but the two are redundant — removing the reset entirely fails no test. The
+guarantee is worth pinning at the seam that actually holds it.

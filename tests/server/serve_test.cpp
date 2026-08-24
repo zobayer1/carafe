@@ -37,6 +37,21 @@ Handler echo() {
     };
 }
 
+// Every parameter the route bound, in order, so a body tells "bound nothing"
+// apart from "bound something under a name I did not ask for".
+Handler echo_params() {
+    return [](const Request& request) {
+        std::string body;
+        for (const auto& entry : request.params.entries) {
+            body += entry.name + '=' + entry.value + '\n';
+        }
+        if (body.empty()) {
+            body = "no parameters\n";
+        }
+        return text_response(200, std::move(body));
+    };
+}
+
 Router routing(std::string_view path) {
     Router router;
     router.add(Method::Get, path, echo());
@@ -334,6 +349,52 @@ TEST(ServeConnection, SendsWhatTheHandlerReturned) {
     EXPECT_EQ(status_line(response), "HTTP/1.1 201 ");
     EXPECT_NE(response.find("x-from-handler: yes\r\n"), std::string::npos);
     EXPECT_EQ(body_of(response), "made\n");
+}
+
+// The seam this member exists for: the router binds a segment off the wire, and
+// the handler reads it back under the name the pattern gave it.
+TEST(ServeConnection, HandsThePathParametersToTheHandler) {
+    auto pair = connected_pair();
+    send_all(pair.first, "GET /users/42 HTTP/1.1\r\nHost: example.test\r\n\r\n");
+
+    Router router;
+    router.add(Method::Get, "/users/<id>", echo_params());
+
+    const std::string response = serve_and_read(pair, router);
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 200 OK");
+    EXPECT_EQ(body_of(response), "id=42\n");
+}
+
+// A static route binds nothing, and every request carries the member regardless,
+// so a handler on such a route must find it empty rather than absent.
+TEST(ServeConnection, LeavesTheParametersEmptyForAStaticRoute) {
+    auto pair = connected_pair();
+    send_all(pair.first, get_root);
+
+    Router router;
+    router.add(Method::Get, "/", echo_params());
+
+    EXPECT_EQ(body_of(serve_and_read(pair, router)), "no parameters\n");
+}
+
+// Two mechanisms keep the second request clean: the reader resets its Request,
+// and serve_connection assigns the router's captures unconditionally. Either
+// alone would do, so this pins the behaviour rather than either mechanism.
+TEST(ServeConnection, DoesNotCarryParametersIntoTheNextRequest) {
+    auto pair = connected_pair();
+    send_all(pair.first,
+             "GET /users/42 HTTP/1.1\r\nHost: a.test\r\n\r\n"
+             "GET /health HTTP/1.1\r\nHost: b.test\r\n\r\n");
+
+    Router router;
+    router.add(Method::Get, "/users/<id>", echo_params());
+    router.add(Method::Get, "/health", echo_params());
+
+    const std::string response = serve_and_read(pair, router);
+
+    EXPECT_NE(response.find("id=42\n"), std::string::npos);
+    EXPECT_NE(response.find("no parameters\n"), std::string::npos);
 }
 
 // A client that half-closes without sending anything is finished, not broken, so
