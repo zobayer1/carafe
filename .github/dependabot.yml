@@ -1,0 +1,8 @@
+# Actions rot: a pinned major version stops receiving fixes once the next one
+# lands, and nothing in a green build says so.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

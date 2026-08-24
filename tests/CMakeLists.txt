@@ -1,18 +1,22 @@
 include(FetchContent)
 
 # Prefer a system GoogleTest, otherwise fetch the pinned release.
-# FIND_PACKAGE_ARGS needs CMake >= 3.24.
+# FIND_PACKAGE_ARGS needs CMake >= 3.24; SYSTEM needs 3.25. SYSTEM is what keeps
+# our warning flags off GoogleTest's headers: without it every test translation
+# unit is analysed with them in scope, which clang-tidy counts in the tens of
+# thousands and then discards.
 FetchContent_Declare(
     googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
     GIT_TAG        v1.17.0
     GIT_SHALLOW    TRUE
+    SYSTEM
     FIND_PACKAGE_ARGS NAMES GTest
 )
 
-# Keep GoogleTest out of our install rules and, on Windows, matched to our CRT.
+# Keep GoogleTest out of our install rules: it is a test dependency, and a
+# consumer installing carafe has no use for it.
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(googletest)
 

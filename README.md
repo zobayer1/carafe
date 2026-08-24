@@ -1,5 +1,10 @@
 # carafe
 
+[![ci](https://github.com/zobayer1/carafe/actions/workflows/ci.yml/badge.svg)](https://github.com/zobayer1/carafe/actions/workflows/ci.yml)
+[![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://en.cppreference.com/w/cpp/17)
+[![platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)](#requirements)
+[![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 A small HTTP microframework for C++17, in the spirit of Flask — routes, handlers,
 requests, responses, and not much else.
 
@@ -38,9 +43,20 @@ app.run(8080);
 
 | Tool         | Version | Notes                                     |
 | ------------ | ------- | ----------------------------------------- |
-| CMake        | ≥ 3.25  | 3.24 for `FIND_PACKAGE_ARGS`, 3.25 for presets v6 |
-| C++ compiler | C++17   | GCC 9+, Clang 10+, MSVC 2019+             |
+| Linux        | ≥ 2.6.28 | `accept4` sets the floor; `SOCK_CLOEXEC` alone needs only 2.6.27 |
+| CMake        | ≥ 3.25  | presets v6 sets the floor; `FIND_PACKAGE_ARGS` needs only 3.24 |
+| C++ compiler | C++17   | GCC and Clang; CI builds both on Ubuntu 24.04 |
 | GoogleTest   | 1.17.0  | fetched automatically, or found on-system |
+
+Linux only, and by decision rather than omission. `Listener` calls `accept4`
+with `SOCK_CLOEXEC` so an accepted descriptor is close-on-exec from the moment
+it exists — neither macOS nor Windows has either, and neither has a race-free
+substitute. The syscall arrived in Linux 2.6.28 and glibc wrapped it in 2.10, so
+on a glibc system that pair is the real floor. Every live distribution clears it
+by well over a decade, which makes it easy to leave unstated and no less a
+requirement. Portability means a socket layer rather than a patch, so it is a
+milestone and not a footnote. No older compiler floor is claimed here because
+none is tested; CI builds what Ubuntu 24.04 ships.
 
 Optional: `ccache` (used automatically if present), `clang-format`, `clang-tidy`,
 `gcovr`. On Fedora, the sanitizer build additionally needs
@@ -105,36 +121,6 @@ make PRESET=release test
 | `CARAFE_ENABLE_SANITIZERS`  | OFF            | Instrument with ASan + UBSan |
 | `CARAFE_ENABLE_COVERAGE`    | OFF            | Instrument with gcov         |
 
-## Layout
-
-The build lives at the top level — `CMakeLists.txt`, `CMakePresets.json`, the
-`Makefile`, and the modules under `cmake/`. Source is split across `include/`,
-`src/`, `tests/`, and `examples/`, prose lives in `docs/`, and each preset builds
-into its own git-ignored `build/<preset>/`.
-
-The boundary that matters is public versus internal. `include/carafe/` is the
-library's API surface: anything there is something a user of the framework may
-rely on, and it is included as `#include <carafe/foo.hpp>`. Everything else
-stays in `src/`, beside the code it serves, and is included with quotes —
-`#include "http/request_parser.hpp"`. That spelling works because `src/` is on
-the include path `PRIVATE`ly, so it resolves inside the library and nowhere
-else. Tests cross the boundary on purpose by putting `src/` on their own include
-path; nothing else does, and a header's location is the statement of whether it
-is supported.
-
-Both trees group by subsystem — `http/`, `net/` and `server/` today — and
-`tests/` mirrors that shape with one `*_test.cpp` per source file. Generated
-headers, currently only `version.hpp` expanded from its `.in` template, land in
-`build/<preset>/generated/carafe/` and are included exactly like hand-written
-public ones; whoever includes them cannot tell the difference.
-
-Two flag conventions are worth knowing before adding targets. Warnings are
-`PRIVATE`, so they never leak into a consumer's build and every target must ask
-for them by calling `carafe_target_warnings()`. Sanitizer and coverage flags are
-`PUBLIC` on the `carafe` target, because ASan has to instrument every
-translation unit that lands in one binary — so anything linking `carafe::carafe`
-inherits them automatically and must *not* apply them again.
-
 ## Roadmap
 
 <!-- Check these off as they land. -->
@@ -157,11 +143,13 @@ inherits them automatically and must *not* apply them again.
 - [ ] Middleware
 - [ ] Keep-alive, chunked transfer encoding
 - [ ] Static file serving
+- [ ] Portability: a socket layer that is not Linux-only
 
 ## Design notes
 
 Every non-obvious decision, and what was rejected to reach it, lives in
-[docs/design-notes.md](docs/design-notes.md).
+[docs/design-notes.md](docs/design-notes.md) — including how the tree is laid
+out, where the public/internal boundary runs, and which flags are `PRIVATE`.
 
 ## License
 

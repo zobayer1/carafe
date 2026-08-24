@@ -16,6 +16,49 @@ Staying on 17 is deliberate — writing that plumbing by hand is most of the poi
 of the exercise. Revisit only if a real problem needs a feature 17 lacks, not
 for convenience.
 
+## A header's location is the statement of support
+
+The build lives at the top level — `CMakeLists.txt`, `CMakePresets.json`, the
+`Makefile`, and the modules under `cmake/`. Source is split across `include/`,
+`src/`, `tests/`, and `examples/`, prose lives in `docs/`, and each preset
+builds into its own git-ignored `build/<preset>/`.
+
+The boundary that matters is public versus internal. `include/carafe/` is the
+library's API surface: anything there is something a user of the framework may
+rely on, and it is included as `#include <carafe/foo.hpp>`. Everything else
+stays in `src/`, beside the code it serves, and is included with quotes —
+`#include "http/request_parser.hpp"`. That spelling works because `src/` is on
+the include path `PRIVATE`ly, so it resolves inside the library and nowhere
+else. Tests cross the boundary on purpose by putting `src/` on their own include
+path; nothing else does, and a header's location is the statement of whether it
+is supported.
+
+The alternative is a header that says so in a comment, or a `detail` namespace
+inside a public header. Both leave the file installable and includable, so the
+statement is advice. Keeping internal headers out of `include/` makes it
+structural: a consumer cannot reach `router.hpp` to depend on it by mistake,
+which is the same reason `App` holds its `Router` behind a forward declaration.
+
+Both trees group by subsystem — `http/`, `net/` and `server/` today — and
+`tests/` mirrors that shape with one `*_test.cpp` per source file. Generated
+headers, currently only `version.hpp` expanded from its `.in` template, land in
+`build/<preset>/generated/carafe/` and are included exactly like hand-written
+public ones; whoever includes them cannot tell the difference.
+
+## Warnings are private, sanitizer flags are public
+
+Two flag conventions are worth knowing before adding a target. Warnings are
+`PRIVATE`, so they never leak into a consumer's build and every target must ask
+for them by calling `carafe_target_warnings()`. Sanitizer and coverage flags are
+`PUBLIC` on the `carafe` target, because ASan has to instrument every
+translation unit that lands in one binary — so anything linking `carafe::carafe`
+inherits them automatically and must *not* apply them again.
+
+The asymmetry is the point. A warning is an opinion about carafe's own source
+and a consumer is entitled to a different one; an instrumented build is a
+property of the whole binary, and a half-instrumented one reports faults that
+are artefacts of the mixture rather than bugs in either half.
+
 ## A parsed request owns its strings
 
 `Request` holds owning `std::string` members. `std::string_view` is used heavily
