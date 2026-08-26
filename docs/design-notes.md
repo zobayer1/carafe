@@ -760,3 +760,53 @@ one's captures, because it is overwritten before any handler sees it. The reader
 resets its `Request` after handing one over, which would guard the same thing,
 but the two are redundant — removing the reset entirely fails no test. The
 guarantee is worth pinning at the seam that actually holds it.
+
+## Splitting comes first, decoding second
+
+A capture is percent-decoded, and it is decoded *after* the path has been cut
+into segments, never before. RFC 3986 §2.2 makes a percent-encoded octet data
+*within* a segment, so `%2F` is a slash the client wants inside one parameter,
+not a separator between two. Decoding the path first would turn `/users/a%2Fb`
+into three segments and `/users/<id>` would never see `a/b`.
+
+The same order matters one layer up: `path_of` cuts the target on a raw `?`
+before anything is decoded, so `%3F` stays inside the segment instead of ending
+the path. And the order is not only about correctness of matching — decode-first
+is exactly how path traversal gets in, because `%2E%2E%2F` becomes `../` before
+anything has a chance to reason about segments. Static file serving is on the
+roadmap, and getting this order wrong now would be a hole waiting for it. Two
+tests exist to forbid the other order rather than to check the happy path.
+
+`+` is not decoded to a space. That rule belongs to
+`application/x-www-form-urlencoded`, which describes query strings and form
+bodies. A path segment is neither, and Flask does not decode it there either.
+
+Only captures are decoded. A literal segment is still compared as the bytes it
+was registered with, so a route added as `/café` does not answer `/caf%C3%A9`
+even though they name the same resource. Making it would mean normalising both
+sides, which drags in dot-segments, case, and Unicode normalisation — a commit
+of its own. The gap is a test rather than a comment, so it announces itself the
+day someone closes it.
+
+## A precondition nobody can check is a precondition worth handling
+
+`parse_request_line` rejects a target whose percent-escapes are not `"%" HEXDIG
+HEXDIG` with a 400, which means the router's decoder never meets an escape that
+does not decode. The tempting conclusion is that the decoder can therefore skip
+the check — and that was the original plan, written into a comment before it was
+written into code.
+
+It is wrong, and not by a small margin. `Router::find` takes a `std::string_view
+target` and nothing in that type records that the bytes came through the parser;
+`router_test.cpp` already calls `find` directly, and the next caller will too. A
+decoder that assumed two hex digits were present reads `text[i + 2]` for a target
+ending in `%4`, which is a read past the end of the view — not a wrong answer, an
+out-of-bounds one. Since the bounds test is not optional, checking the two digits
+alongside it costs nothing and gives one rule instead of two: an escape that is
+not `"%" HEXDIG HEXDIG` is copied as it stands.
+
+That fallback is unreachable through a served request, which is a reason to
+document it on `find`, not a reason to leave it out. The alternative — an error
+channel on `find` — was rejected for the reason it has always been rejected here:
+`add` and `find` have no way to report, and giving them one to serve a case the
+parser already answers would be a large change bought with nothing.

@@ -41,6 +41,12 @@ public:
     // order. That makes a duplicate harmless rather than an error with no channel
     // to report it on.
     void add(http::Method method, std::string_view path, http::Handler handler);
+
+    // The target is expected to have come off the wire through the parser, which
+    // rejects a malformed percent-escape with a 400 before this is reached. One
+    // that arrives anyway binds the literal bytes it is spelt with: find has no
+    // channel to report on, and a decoder written to trust the precondition would
+    // read past the end of the target rather than merely answer oddly.
     [[nodiscard]] Match find(http::Method method, std::string_view target) const;
 
     // Every method registered for this path, in registration order and without

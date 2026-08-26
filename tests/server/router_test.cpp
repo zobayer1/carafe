@@ -6,7 +6,9 @@
 
 #include "http/printers.hpp"
 
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -33,6 +35,19 @@ Handler answering(std::string tag) {
 
 std::string answer_of(const Match& match) {
     return match.handler == nullptr ? std::string{} : (*match.handler)(Request{}).body;
+}
+
+// find answers by value and get() views into it, so the Match has to outlive the
+// view: this hands back an owned copy instead. Nothing bound stays distinct from
+// an empty string bound, because those mean different things.
+std::optional<std::string> bound_param(const Router& router, std::string_view target,
+                                       std::string_view name) {
+    const Match match = router.find(Method::Get, target);
+    const std::optional<std::string_view> value = match.params.get(name);
+    if (!value.has_value()) {
+        return std::nullopt;
+    }
+    return std::string{*value};
 }
 
 TEST(Router, FindsNothingWhenNothingIsRegistered) {
@@ -462,6 +477,72 @@ TEST(Router, CapturesBothWhenAPatternBindsOneNameTwice) {
 
 // The fallback is remembered a pass of the loop before it is returned, and the
 // captures have to be remembered with it -- they cannot be recomputed later.
+// A capture is what the client meant, not the spelling it travelled in: RFC 3986
+// 2.1 makes "%20" a space, and 6.2.2.1 makes both hex cases the same byte.
+TEST(Router, DecodesPercentEscapesInACapture) {
+    Router router;
+    router.add(Method::Get, "/users/<id>", answering("user"));
+
+    EXPECT_EQ(bound_param(router, "/users/a%20b", "id"), "a b");
+    EXPECT_EQ(bound_param(router, "/users/caf%C3%A9", "id"), "caf\xC3\xA9");
+    EXPECT_EQ(bound_param(router, "/users/%2f%2F", "id"), "//");
+}
+
+// The split runs first and the decode second, so an escaped slash is a byte of
+// one segment rather than a separator between two. The other order is how a
+// path-traversal bug gets in, and forbidding it is what this test is for.
+TEST(Router, DecodesAnEscapedSlashWithoutSplittingOnIt) {
+    Router router;
+    router.add(Method::Get, "/users/<id>", answering("user"));
+
+    const Match match = router.find(Method::Get, "/users/a%2Fb");
+
+    ASSERT_TRUE(match);
+    ASSERT_EQ(match.params.entries.size(), 1U);
+    EXPECT_EQ(match.params.entries.front().value, "a/b");
+}
+
+// path_of cuts on a raw '?' before anything is decoded, so an escaped one stays
+// inside the segment instead of ending the path early.
+TEST(Router, DecodesAnEscapedQuestionMarkWithoutCuttingTheQuery) {
+    Router router;
+    router.add(Method::Get, "/users/<id>", answering("user"));
+
+    EXPECT_EQ(bound_param(router, "/users/a%3Fb", "id"), "a?b");
+}
+
+// '+' stands for a space in application/x-www-form-urlencoded, which is a rule
+// about query strings and form bodies. A path segment is neither.
+TEST(Router, DoesNotTreatPlusAsASpace) {
+    Router router;
+    router.add(Method::Get, "/users/<id>", answering("user"));
+
+    EXPECT_EQ(bound_param(router, "/users/a+b", "id"), "a+b");
+}
+
+// Unreachable through a served request, since the parser answers all three with a
+// 400 -- but find promises nothing about its target, and the last two are where a
+// decoder that trusted the parser would read past the end of one.
+TEST(Router, CopiesAnUndecodableEscapeLiterally) {
+    Router router;
+    router.add(Method::Get, "/users/<id>", answering("user"));
+
+    EXPECT_EQ(bound_param(router, "/users/a%zzb", "id"), "a%zzb");
+    EXPECT_EQ(bound_param(router, "/users/a%4", "id"), "a%4");
+    EXPECT_EQ(bound_param(router, "/users/%", "id"), "%");
+}
+
+// A known gap, not a decision: only captures are decoded, so a literal segment is
+// still compared as the bytes it was registered with. Expected to fail the day a
+// pattern and a request path are normalised against each other.
+TEST(Router, DoesNotDecodeLiteralSegments) {
+    Router router;
+    router.add(Method::Get, "/caf\xC3\xA9", answering("cafe"));
+
+    EXPECT_FALSE(router.find(Method::Get, "/caf%C3%A9"));
+    EXPECT_TRUE(router.find(Method::Get, "/caf\xC3\xA9"));
+}
+
 TEST(Router, HeadKeepsTheCapturesOfTheGetRouteItFallsBackTo) {
     Router router;
     router.add(Method::Get, "/users/<id>", answering("get"));

@@ -119,8 +119,9 @@ namespace {
 }
 
 // A bare '%' is not a byte a URI may carry, so there is no lenient reading to
-// fall back to. Rejecting the whole target here is what lets the router decode
-// a capture with no branch for input it cannot represent.
+// fall back to. Rejecting the whole target here is what keeps the router's
+// decoder from ever meeting an escape that does not decode; Router::find copes
+// with one anyway, because no type says a target arrived through this function.
 [[nodiscard]] bool has_valid_escapes(std::string_view target) noexcept {
     for (std::size_t i = 0; i < target.size(); ++i) {
         if (target[i] != '%') {

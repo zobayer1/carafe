@@ -21,6 +21,44 @@ std::string_view path_of(std::string_view target) noexcept {
     return target.substr(0, target.find('?'));
 }
 
+[[nodiscard]] constexpr int hex_value(char ch) noexcept {
+    const auto u_ch = static_cast<unsigned char>(ch);
+    if (u_ch >= '0' && u_ch <= '9') {
+        return u_ch - '0';
+    }
+    if (u_ch >= 'a' && u_ch <= 'f') {
+        return u_ch - 'a' + 10;
+    }
+    if (u_ch >= 'A' && u_ch <= 'F') {
+        return u_ch - 'A' + 10;
+    }
+    return -1;
+}
+
+// An escape that is not "%" HEXDIG HEXDIG is copied as it stands. The parser
+// rejects those before a request ever reaches here, so the rule is unreachable in
+// a served request -- but find() states no precondition on its target, and a
+// decoder that assumed one would read past the end of a view for "%4".
+[[nodiscard]] std::string percent_decode(std::string_view text) {
+    std::string decoded;
+    decoded.reserve(text.size());  // decoding only ever shrinks
+
+    for (size_type i = 0; i < text.size(); ++i) {
+        // Two steps rather than one condition, because text[i + 2] has to stay
+        // behind the bounds test and only the first line carries it.
+        const int high = i + 2 < text.size() ? hex_value(text[i + 1]) : -1;
+        const int low = high < 0 ? -1 : hex_value(text[i + 2]);
+
+        if (text[i] != '%' || low < 0) {
+            decoded.push_back(text[i]);
+            continue;
+        }
+        decoded.push_back(static_cast<char>((high << 4) | low));
+        i += 2;
+    }
+    return decoded;
+}
+
 // One definition of what "this route serves this path" means, because find() and
 // allowed_methods() must never disagree about it. Captures into *out only on
 // success, so a half-match leaves no debris; null asks for the yes or no alone.
@@ -45,7 +83,7 @@ bool matches(const Pattern& pattern, std::string_view path, http::Params* out) {
                 return false;
             }
             if (out != nullptr) {
-                captured.entries.push_back({segment.text, std::string(piece)});
+                captured.entries.push_back({segment.text, percent_decode(piece)});
             }
         } else if (segment.text != piece) {
             return false;

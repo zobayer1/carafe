@@ -138,7 +138,9 @@ make PRESET=release test
 - [x] Routing: static paths matched by method, with 404 and 405 + `Allow`
 - [x] Handler registration API
 - [x] Routing: path parameters, one segment each
-- [ ] Routing: typed and multi-segment parameters, percent-decoded values
+- [x] Routing: percent-decoded captures
+- [ ] Routing: typed and multi-segment parameters
+- [ ] Routing: normalising a pattern and a request path against each other
 - [ ] Concurrency: thread-per-connection, then a thread pool
 - [ ] Middleware
 - [ ] Keep-alive, chunked transfer encoding
