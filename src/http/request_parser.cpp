@@ -73,6 +73,12 @@ namespace {
     return false;
 }
 
+// RFC 3986 §2.1: pct-encoded = "%" HEXDIG HEXDIG. Both hex cases are accepted
+// because §6.2.2.1 makes them equivalent.
+[[nodiscard]] constexpr bool is_hex_digit(unsigned char ch) noexcept {
+    return (ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'F') || (ch >= 'a' && ch <= 'f');
+}
+
 // RFC 9110 §5.6.2: tchar = ALPHA / DIGIT / "!" / "#" / "$" / "%" / "&" /
 // "'" / "*" / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~"
 [[nodiscard]] constexpr bool is_tchar(unsigned char ch) noexcept {
@@ -112,6 +118,25 @@ namespace {
     return ch == '\t' || (ch >= 0x20 && ch != 0x7F);
 }
 
+// A bare '%' is not a byte a URI may carry, so there is no lenient reading to
+// fall back to. Rejecting the whole target here is what lets the router decode
+// a capture with no branch for input it cannot represent.
+[[nodiscard]] bool has_valid_escapes(std::string_view target) noexcept {
+    for (std::size_t i = 0; i < target.size(); ++i) {
+        if (target[i] != '%') {
+            continue;
+        }
+        // The size test guards both indexings: string_view does not bounds check,
+        // so a '%' in the last two bytes would otherwise read past the end.
+        if (i + 2 >= target.size() || !is_hex_digit(static_cast<unsigned char>(target[i + 1])) ||
+            !is_hex_digit(static_cast<unsigned char>(target[i + 2]))) {
+            return false;
+        }
+        i += 2;
+    }
+    return true;
+}
+
 }  // namespace
 
 // Validates entirely on views; the one allocation happens only once the line is
@@ -149,6 +174,12 @@ RequestLineResult parse_request_line(std::string_view line) {
     // Version test first: ensure that we understand the protocol version.
     if (const auto err = parse_version(version_part, version); err != ParseError::None) {
         return {err, {}};
+    }
+
+    // Ahead of the method lookup: 501 promises a request we could read carrying a
+    // verb we do not implement, and a target we cannot read breaks that promise.
+    if (!has_valid_escapes(target_part)) {
+        return {ParseError::Malformed, {}};
     }
 
     const auto method_opt = lookup_method(method_part);

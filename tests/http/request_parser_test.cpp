@@ -150,11 +150,41 @@ TEST(ParseRequestLine, VersionErrorTakesPrecedenceOverMethodError) {
     expect_request_line_error("FROB / HTTP/9.9", ParseError::UnsupportedVersion);
 }
 
-// A known gap, not a decision: the target is only checked for being non-empty
-// and space-free. Expected to fail the day request-target validation lands.
+// RFC 3986 2.1 admits no bare '%': each of these is a guess at what was meant.
+// The last two reach the bounds test, one with the '%' at the front of the
+// target and one with content ahead of it.
+TEST(ParseRequestLine, RejectsMalformedPercentEscapes) {
+    expect_request_line_error("GET /%zz HTTP/1.1", ParseError::Malformed);
+    expect_request_line_error("GET /%2z HTTP/1.1", ParseError::Malformed);
+    expect_request_line_error("GET /%z2 HTTP/1.1", ParseError::Malformed);
+    expect_request_line_error("GET /%%41 HTTP/1.1", ParseError::Malformed);
+    expect_request_line_error("GET /a?x=%2G HTTP/1.1", ParseError::Malformed);
+    expect_request_line_error("GET /%4 HTTP/1.1", ParseError::Malformed);
+    expect_request_line_error("GET /a%2 HTTP/1.1", ParseError::Malformed);
+}
+
+// Hex is case-insensitive, and the scan resumes past a good escape rather than
+// re-reading its digits as the start of another. The query is checked too:
+// pct-encoded is a URI-wide production, not a path one.
+TEST(ParseRequestLine, AcceptsWellFormedPercentEscapes) {
+    expect_request_line("GET /a%20b HTTP/1.1", Method::Get, "/a%20b", Version::Http11);
+    expect_request_line("GET /%2F%2f HTTP/1.1", Method::Get, "/%2F%2f", Version::Http11);
+    expect_request_line("GET /caf%C3%A9 HTTP/1.1", Method::Get, "/caf%C3%A9", Version::Http11);
+    expect_request_line("GET /a?x=%26 HTTP/1.1", Method::Get, "/a?x=%26", Version::Http11);
+}
+
+// The target is tested after the version and before the method, so a bad one
+// loses to a protocol we do not speak and beats a verb we do not implement.
+TEST(ParseRequestLine, TargetErrorLosesToVersionAndBeatsMethod) {
+    expect_request_line_error("GET /%zz HTTP/9.9", ParseError::UnsupportedVersion);
+    expect_request_line_error("FROB /%zz HTTP/1.1", ParseError::Malformed);
+}
+
+// A known gap, not a decision: escapes are validated, but the target is still
+// not checked against any of the four request-target forms RFC 9112 3.2 gives.
+// Expected to fail the day origin-form and absolute-form are told apart.
 TEST(ParseRequestLine, AcceptsAnyNonEmptyTargetForNow) {
     expect_request_line("GET foo HTTP/1.1", Method::Get, "foo", Version::Http11);
-    expect_request_line("GET %zz HTTP/1.1", Method::Get, "%zz", Version::Http11);
 }
 
 // Names are case-insensitive, so normalise once here instead of at every lookup.
