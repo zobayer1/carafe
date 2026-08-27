@@ -3,6 +3,7 @@
 #include "http/printers.hpp"
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -30,6 +31,16 @@ Lines drain(LineReader& reader) {
         }
         lines.emplace_back(*result.line);
     }
+}
+
+// take() views into the buffer, which the next append() reallocates: this copies
+// out. Nothing yet stays distinct from an empty take, because those differ.
+std::optional<std::string> take(LineReader& reader, std::size_t n) {
+    const auto bytes = reader.take(n);
+    if (!bytes.has_value()) {
+        return std::nullopt;
+    }
+    return std::string{*bytes};
 }
 
 // Feeds one byte at a time so every chunk boundary and resumed scan is exercised.
@@ -191,6 +202,67 @@ TEST(LineReader, LineTooLongIsTerminal) {
     reader.append(std::string(max_line_length + 1, 'a'));
     EXPECT_EQ(reader.next_line().error, LineError::LineTooLong);
     EXPECT_EQ(reader.next_line().error, LineError::LineTooLong);
+}
+
+// Bytes come out consumed, not peeked at.
+TEST(LineReader, TakesExactlyTheRequestedBytes) {
+    LineReader reader;
+    reader.append("abcdef");
+    EXPECT_EQ(take(reader, 3), "abc");
+    EXPECT_EQ(take(reader, 3), "def");
+}
+
+// A body split across packets is the ordinary case, not a failure.
+TEST(LineReader, WaitsForEveryRequestedByte) {
+    LineReader reader;
+    reader.append("ab");
+    EXPECT_EQ(take(reader, 3), std::nullopt);
+    reader.append("c");
+    EXPECT_EQ(take(reader, 3), "abc");
+}
+
+// The order a body actually arrives in: a head read as lines, then raw bytes.
+TEST(LineReader, TakesBytesFollowingALine) {
+    LineReader reader;
+    reader.append("hi\r\nbody");
+    EXPECT_EQ(drain(reader), (Lines{"hi"}));
+    EXPECT_EQ(take(reader, 4), "body");
+}
+
+// Zero bytes are here whatever the buffer holds: a Content-Length of 0 must not
+// be answered "nothing yet" forever.
+TEST(LineReader, TakesNothingWithoutWaiting) {
+    LineReader reader;
+    EXPECT_EQ(take(reader, 0), "");
+}
+
+// Taken bytes were never scanned for a terminator. A scan position left behind
+// them finds the CRLF inside them and measures the next line from a start that
+// is already past its end.
+TEST(LineReader, LineScanningResumesAfterTakenBytes) {
+    LineReader reader;
+    reader.append("A\r\nB\r\n");
+    EXPECT_EQ(take(reader, 3), "A\r\n");
+    EXPECT_EQ(drain(reader), (Lines{"B"}));
+}
+
+// Compaction shifts the scan position back by the consumed prefix, which
+// underflows if a take left it behind.
+TEST(LineReader, SurvivesCompactionAfterATake) {
+    LineReader reader;
+    reader.append("abcd");
+    EXPECT_EQ(take(reader, 2), "ab");
+    reader.append("e\r\n");
+    EXPECT_EQ(drain(reader), (Lines{"cde"}));
+}
+
+// next_line's cap guards a scan for a terminator that may never come. take is
+// told its length up front and has nothing to guard against.
+TEST(LineReader, TakesMoreThanTheLineLengthCap) {
+    LineReader reader;
+    const std::string body(max_line_length + 1, 'x');
+    reader.append(body);
+    EXPECT_EQ(take(reader, body.size()), body);
 }
 
 }  // namespace

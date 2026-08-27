@@ -59,4 +59,19 @@ LineResult LineReader::next_line() {
     return LineResult{LineError::None, line};
 }
 
+std::optional<std::string_view> LineReader::take(std::size_t n) {
+    if (buffer_.size() - begin_ < n) {
+        return std::nullopt;
+    }
+
+    auto bytes = std::string_view(buffer_.data() + begin_, n);
+    begin_ += n;
+    // scanned_ says no terminator lies before it, and taken bytes were never
+    // scanned. Left behind begin_, the next search finds a CRLF inside them and
+    // measures a line from a start that is already past its end.
+    scanned_ = begin_;
+
+    return bytes;
+}
+
 }  // namespace carafe::http

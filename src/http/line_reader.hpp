@@ -28,13 +28,20 @@ struct LineResult {
 // Splits a byte stream into CRLF-terminated lines across chunk boundaries.
 class LineReader {
 public:
-    // Invalidates every view handed out by next_line(): the buffer reallocates
-    // and compacts here.
+    // Invalidates every view handed out by next_line() and take(): the buffer
+    // reallocates and compacts here.
     void append(std::string_view bytes);
 
     // The next complete line without its CRLF, as a view into the internal
     // buffer, valid only until the next append().
     [[nodiscard]] LineResult next_line();
+
+    // The next `n` bytes unchanged, as a view into the internal buffer, valid
+    // only until the next append(); nothing yet if fewer have arrived. No cap,
+    // unlike next_line(): a body's length is known from its Content-Length
+    // before the first byte is taken, so an oversized one is refused by the
+    // caller rather than discovered halfway through.
+    [[nodiscard]] std::optional<std::string_view> take(std::size_t n);
 
 private:
     std::string buffer_;
