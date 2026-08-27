@@ -810,3 +810,66 @@ document it on `find`, not a reason to leave it out. The alternative — an erro
 channel on `find` — was rejected for the reason it has always been rejected here:
 `add` and `find` have no way to report, and giving them one to serve a case the
 parser already answers would be a large change bought with nothing.
+
+## A body is framed by the head, and by nothing else
+
+`measure_body` takes a `const Headers&` and nothing more. Not the method, not
+the version, not the target — the length of a body is decided by the fields that
+declare it, and by no other part of the request.
+
+That sounds like a tidiness rule and is really a bug fix. Before this, a `POST`
+with a body was answered and its bytes left in the buffer, where the next
+`next_line()` found them. A three-byte body in front of a pipelined `GET` made
+`abcGET` parse as a method token, so a perfectly ordinary request came back
+`501 Not Implemented` with `connection: close`. Not a 400 about the wrong
+request — an actively wrong answer about the right one. Anything that reads a
+body only for the methods it expects to carry one has the same hole, one verb
+further along.
+
+A request with no `Content-Length` has no body. RFC 9112 §6.3 rule 6 says so in
+as many words, and the tempting alternative — a body running to end of stream —
+is a rule for *responses* only, where the connection closing is what delimits
+the content. Reading it into requests would mean a `POST` with no length field
+consumed the rest of the connection, pipelining included. 411 is not the answer
+here either: it is a status an origin server may choose when a handler requires
+a length, not a framing rule, so it belongs to whatever handler wants it rather
+than to the reader.
+
+## One declared length, or none at all
+
+Two spellings say a body is three bytes twice:
+
+    Content-Length: 3
+    Content-Length: 3
+
+    Content-Length: 3, 3
+
+RFC 9110 §5.3 lets a recipient fold repeated fields into one comma list, which
+is exactly what makes those the same request. Both are refused even though the
+values agree, because the risk was never disagreement between the two numbers —
+it is disagreement between two *recipients*, one reading the pair as a length
+and one rejecting it. That is how a second request gets smuggled inside the
+first, and it costs nothing to be the recipient that refuses.
+
+Neither rule catches both spellings. Counting fields catches the first and never
+sees the second, which arrives as one field; requiring the whole value to be
+`1*DIGIT` catches the second and says nothing about the first. A parser that
+stopped at the first byte it could not use would read `3, 3` as 3 and frame the
+request the way only one of the two disagreeing recipients would.
+
+The cap is applied to the declared length, never to bytes already held. A
+`Content-Length` over the limit is refused at the blank line, before a single
+body byte is buffered, which is why `LineReader::take` carries no cap of its own:
+by the time anything asks for bytes, the number has already been agreed to. It
+is also why a twenty-digit length is a 413 rather than an overflow — the digit
+loop stops as soon as the running value passes the cap, so it never reaches a
+multiply that could wrap.
+
+`Transfer-Encoding` is tested before any of this, and any value fails with a 501.
+That ordering is not stylistic: it makes the `Transfer-Encoding` plus
+`Content-Length` pair that §6.3 rule 3 singles out unreachable, rather than
+something a further rule would have to catch. It also puts an unimplemented
+coding on the far side of a line from an unimplemented method. Both answer 501,
+but a method we do not serve arrives on a request we can measure and step over,
+while a coding we cannot decode leaves us with no idea where the body ends. Same
+status, opposite consequence for the connection.

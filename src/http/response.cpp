@@ -16,6 +16,8 @@ std::string_view status_message(int status) noexcept {
             return "Not Found";
         case 405:
             return "Method Not Allowed";
+        case 413:
+            return "Content Too Large";
         case 414:
             return "URI Too Long";
         case 431:

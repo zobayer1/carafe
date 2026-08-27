@@ -13,13 +13,15 @@ namespace carafe::http {
 // Each value maps to one status, but the mapping is many to one.
 enum class RequestError {
     None,
-    Malformed,           // 400
-    UnknownMethod,       // 501
-    UnsupportedVersion,  // 505
-    RequestLineTooLong,  // 414
-    HeaderTooLong,       // 431
-    TooManyHeaders,      // 431
-    HeadTooLarge,        // 431
+    Malformed,                    // 400
+    UnknownMethod,                // 501
+    UnsupportedVersion,           // 505
+    RequestLineTooLong,           // 414
+    HeaderTooLong,                // 431
+    TooManyHeaders,               // 431
+    HeadTooLarge,                 // 431
+    BodyTooLarge,                 // 413
+    UnsupportedTransferEncoding,  // 501
 };
 
 // Three states, like LineResult: nothing yet, a request, or a failure.
@@ -43,23 +45,29 @@ public:
     [[nodiscard]] RequestResult next_request();
 
 private:
-    enum class Phase { RequestLine, Headers };
+    enum class Phase { RequestLine, Headers, Body };
 
     // Records the failure so it survives to every later call, then reports it.
     [[nodiscard]] RequestResult fail(RequestError error);
+
+    // Hands the assembled request over and arms the next one. Only success resets: after
+    // a failure the stream position is unknown, so there is nothing safe to resume from.
+    [[nodiscard]] RequestResult finish_request();
 
     // Engaged means "hand this to the caller"; empty means "read another line".
     [[nodiscard]] std::optional<RequestResult> handle_request_line(std::string_view line);
     [[nodiscard]] std::optional<RequestResult> handle_field_line(std::string_view line);
 
-    // Validates the assembled head, hands it over, and arms the next request.
-    [[nodiscard]] RequestResult complete_head();
+    // Validates the assembled head and decides what follows it: a request to hand
+    // over, a failure, or a body still to be read.
+    [[nodiscard]] std::optional<RequestResult> complete_head();
 
     Phase phase_ = Phase::RequestLine;
     LineReader line_reader_;
     Request request_;
     RequestError failure_ = RequestError::None;
     std::size_t head_bytes_ = 0;
+    std::size_t body_bytes_ = 0;
     std::size_t field_count_ = 0;
 };
 

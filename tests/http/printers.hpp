@@ -89,6 +89,10 @@ inline std::ostream& operator<<(std::ostream& os, RequestError error) {
             return os << "TooManyHeaders";
         case RequestError::HeadTooLarge:
             return os << "HeadTooLarge";
+        case RequestError::BodyTooLarge:
+            return os << "BodyTooLarge";
+        case RequestError::UnsupportedTransferEncoding:
+            return os << "UnsupportedTransferEncoding";
     }
     return os << "RequestError(" << static_cast<int>(error) << ")";
 }

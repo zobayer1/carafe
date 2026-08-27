@@ -23,9 +23,12 @@ namespace {
 int status_for(http::RequestError error) {
     switch (error) {
         case http::RequestError::UnknownMethod:
+        case http::RequestError::UnsupportedTransferEncoding:
             return 501;
         case http::RequestError::UnsupportedVersion:
             return 505;
+        case http::RequestError::BodyTooLarge:
+            return 413;
         case http::RequestError::RequestLineTooLong:
             return 414;
         case http::RequestError::HeaderTooLong:

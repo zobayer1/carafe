@@ -6,6 +6,7 @@
 #include "http/request_parser.hpp"
 
 #include <cstddef>
+#include <limits>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -22,6 +23,80 @@ constexpr std::size_t max_fields = 100;
 
 // Stripped by LineReader, but still bytes the client sent.
 constexpr std::size_t crlf_size = 2;
+
+// No streaming yet, so a body is held whole in memory before a handler sees it.
+constexpr std::size_t max_body_bytes = 1048576;
+
+// What lets the digit loop carry one bound instead of two: the cap is tested
+// after each digit, so the next multiply starts below it and cannot wrap.
+static_assert(max_body_bytes <= (std::numeric_limits<std::size_t>::max() - 9) / 10);
+
+namespace {
+
+struct BodyLength {
+    RequestError error = RequestError::None;
+    std::size_t bytes = 0;
+};
+
+// RFC 9112 §6.2: Content-Length = 1*DIGIT. The whole value, not a leading
+// number: reading "3, 3" as 3 frames the request the way only one of two
+// disagreeing recipients would.
+[[nodiscard]] BodyLength parse_content_length(std::string_view value) noexcept {
+    if (value.empty()) {
+        return {RequestError::Malformed, 0};
+    }
+
+    std::size_t bytes = 0;
+    for (const char ch : value) {
+        const auto digit = static_cast<unsigned char>(ch);
+        if (digit < '0' || digit > '9') {
+            return {RequestError::Malformed, 0};
+        }
+        bytes = (bytes * 10) + (digit - '0');
+        if (bytes > max_body_bytes) {
+            return {RequestError::BodyTooLarge, 0};
+        }
+    }
+    return {RequestError::None, bytes};
+}
+
+// RFC 9112 §6.3, minus the rules only a response can reach.
+[[nodiscard]] BodyLength measure_body(const Headers& headers) noexcept {
+    // §6.1: a coding we do not implement leaves us unable to say where the body
+    // ends, so there is nothing to read past and nothing to resume from.
+    if (headers.contains("transfer-encoding")) {
+        return {RequestError::UnsupportedTransferEncoding, 0};
+    }
+
+    // Refused even when the values agree: §5.3 makes this and "3, 3" the same
+    // request, and a recipient resolving them differently is how one gets
+    // smuggled inside another.
+    if (headers.count("content-length") > 1) {
+        return {RequestError::Malformed, 0};
+    }
+    const auto value = headers.get("content-length");
+
+    // §6.3: no Content-Length on a request means no body. Running to end of
+    // stream is a response reading.
+    if (!value.has_value()) {
+        return {};
+    }
+    return parse_content_length(*value);
+}
+
+}  // namespace
+
+RequestResult RequestReader::finish_request() {
+    Request ready = std::move(request_);
+
+    phase_ = Phase::RequestLine;
+    request_ = Request{};
+    head_bytes_ = 0;
+    body_bytes_ = 0;
+    field_count_ = 0;
+
+    return {RequestError::None, std::move(ready)};
+}
 
 RequestResult RequestReader::fail(RequestError error) {
     failure_ = error;
@@ -75,7 +150,7 @@ std::optional<RequestResult> RequestReader::handle_field_line(std::string_view l
     return std::nullopt;
 }
 
-RequestResult RequestReader::complete_head() {
+std::optional<RequestResult> RequestReader::complete_head() {
     // RFC 9112 §3.2 requires exactly one Host on 1.1. Two are ambiguous at any
     // version, and ambiguity about the target host is a routing decision an
     // attacker would be making.
@@ -84,16 +159,19 @@ RequestResult RequestReader::complete_head() {
         return fail(RequestError::Malformed);
     }
 
-    Request ready = std::move(request_);
+    const BodyLength body = measure_body(request_.headers);
+    if (body.error != RequestError::None) {
+        return fail(body.error);
+    }
+    body_bytes_ = body.bytes;
 
-    // Only success resets. After a failure the stream position is unknown, so
-    // there is nothing safe to resume from.
-    phase_ = Phase::RequestLine;
-    request_ = Request{};
-    head_bytes_ = 0;
-    field_count_ = 0;
+    // Nothing to wait for, so the request is complete at the blank line.
+    if (body_bytes_ == 0) {
+        return finish_request();
+    }
 
-    return {RequestError::None, std::move(ready)};
+    phase_ = Phase::Body;
+    return std::nullopt;
 }
 
 RequestResult RequestReader::next_request() {
@@ -102,6 +180,15 @@ RequestResult RequestReader::next_request() {
     }
 
     while (true) {
+        if (phase_ == Phase::Body) {
+            const auto body = line_reader_.take(body_bytes_);
+            if (!body.has_value()) {
+                return {};
+            }
+            request_.body.assign(*body);
+            return finish_request();
+        }
+
         const LineResult line_res = line_reader_.next_line();
 
         // One LineError, two answers: only this layer knows which line it asked

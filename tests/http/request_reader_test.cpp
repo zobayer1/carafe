@@ -21,6 +21,7 @@ using carafe::http::Version;
 constexpr std::size_t max_head_bytes = 65536;
 constexpr std::size_t max_header_fields = 100;
 constexpr std::size_t max_line_length = 8192;
+constexpr std::size_t max_body_bytes = 1048576;
 
 // One append, one answer.
 RequestResult read(RequestReader& reader, std::string_view bytes) {
@@ -40,6 +41,21 @@ RequestResult read_bytewise(RequestReader& reader, std::string_view bytes) {
         }
     }
     return result;
+}
+
+// A POST declaring the length of `body` and carrying it.
+std::string post_body(std::string_view body) {
+    return "POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: " + std::to_string(body.size()) +
+           "\r\n\r\n" + std::string{body};
+}
+
+// A POST whose Content-Length carries `value`, with no body following.
+RequestError content_length_error(std::string_view value) {
+    RequestReader reader;
+    std::string bytes = "POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: ";
+    bytes += value;
+    bytes += "\r\n\r\n";
+    return read(reader, bytes).error;
 }
 
 // `count` field lines, each value `value_size` bytes, with distinct names.
@@ -101,7 +117,8 @@ TEST(RequestReader, ParsesEveryField) {
                              "Content-Length: 4\r\n"
                              "Accept: text/html\r\n"
                              "Accept: application/json\r\n"
-                             "\r\n");
+                             "\r\n"
+                             "abcd");
     ASSERT_TRUE(result) << "unexpected error: " << result.error;
     ASSERT_TRUE(result.request.has_value());
     EXPECT_EQ(result.request->method, Method::Post);
@@ -297,6 +314,168 @@ TEST(RequestReader, FailureIsTerminal) {
     const auto after = read(reader, "GET / HTTP/1.1\r\nHost: x\r\n\r\n");
     EXPECT_EQ(after.error, RequestError::Malformed);
     EXPECT_FALSE(after.request.has_value());
+}
+
+TEST(RequestReader, ReadsABodyOfTheDeclaredLength) {
+    RequestReader reader;
+    const auto result = read(reader, post_body("hello"));
+    ASSERT_TRUE(result) << "unexpected error: " << result.error;
+    ASSERT_TRUE(result.request.has_value());
+    EXPECT_EQ(result.request->body, "hello");
+}
+
+// Until the body is whole there is no request, and that must not read as a failure.
+TEST(RequestReader, WaitsForTheWholeBody) {
+    RequestReader reader;
+    const auto pending =
+        read(reader, "POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhel");
+    EXPECT_TRUE(pending) << "unexpected error: " << pending.error;
+    EXPECT_FALSE(pending.request.has_value());
+
+    const auto done = read(reader, "lo");
+    ASSERT_TRUE(done) << "unexpected error: " << done.error;
+    ASSERT_TRUE(done.request.has_value());
+    EXPECT_EQ(done.request->body, "hello");
+}
+
+TEST(RequestReader, SurvivesBytewiseBodyDelivery) {
+    RequestReader reader;
+    const auto result = read_bytewise(reader, post_body("abcd"));
+    ASSERT_TRUE(result) << "unexpected error: " << result.error;
+    ASSERT_TRUE(result.request.has_value());
+    EXPECT_EQ(result.request->body, "abcd");
+}
+
+// No Content-Length is no body, rather than a body running to end of stream.
+TEST(RequestReader, TreatsAMissingContentLengthAsNoBody) {
+    RequestReader reader;
+    const auto result = read(reader, "POST /p HTTP/1.1\r\nHost: x\r\n\r\n");
+    ASSERT_TRUE(result) << "unexpected error: " << result.error;
+    ASSERT_TRUE(result.request.has_value());
+    EXPECT_TRUE(result.request->body.empty());
+}
+
+TEST(RequestReader, TreatsAZeroContentLengthAsNoBody) {
+    RequestReader reader;
+    const auto result = read(reader, "POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n");
+    ASSERT_TRUE(result) << "unexpected error: " << result.error;
+    ASSERT_TRUE(result.request.has_value());
+    EXPECT_TRUE(result.request->body.empty());
+}
+
+// The bug this closes: unconsumed body bytes used to parse as the next request
+// line, answering an ordinary GET with 501.
+TEST(RequestReader, KeepsBodyBytesOutOfTheNextRequestLine) {
+    RequestReader reader;
+    reader.append(
+        "POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\nabc"
+        "GET /b HTTP/1.1\r\nHost: y\r\n\r\n");
+
+    const auto first = reader.next_request();
+    ASSERT_TRUE(first.request.has_value()) << "unexpected error: " << first.error;
+    EXPECT_EQ(first.request->target, "/a");
+    EXPECT_EQ(first.request->body, "abc");
+
+    const auto second = reader.next_request();
+    ASSERT_TRUE(second.request.has_value()) << "unexpected error: " << second.error;
+    EXPECT_EQ(second.request->method, Method::Get);
+    EXPECT_EQ(second.request->target, "/b");
+    EXPECT_TRUE(second.request->body.empty());
+}
+
+// Framing does not consult the method: five bytes are five bytes whatever the
+// verb means by them.
+TEST(RequestReader, ReadsABodyOnAGet) {
+    RequestReader reader;
+    const auto result = read(reader, "GET /p HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nhi");
+    ASSERT_TRUE(result) << "unexpected error: " << result.error;
+    ASSERT_TRUE(result.request.has_value());
+    EXPECT_EQ(result.request->body, "hi");
+}
+
+TEST(RequestReader, ResetsTheBodyBetweenRequests) {
+    RequestReader reader;
+    reader.append(post_body("abc") + "GET /b HTTP/1.1\r\nHost: y\r\n\r\n");
+
+    ASSERT_TRUE(reader.next_request().request.has_value());
+    const auto second = reader.next_request();
+    ASSERT_TRUE(second.request.has_value()) << "unexpected error: " << second.error;
+    EXPECT_TRUE(second.request->body.empty());
+}
+
+// A body is not head, so the head cap must not see it.
+TEST(RequestReader, BodyBytesDoNotCountTowardTheHeadCap) {
+    RequestReader reader;
+    const auto result = read(reader, post_body(std::string(max_head_bytes * 2, 'b')));
+    ASSERT_TRUE(result) << "unexpected error: " << result.error;
+    ASSERT_TRUE(result.request.has_value());
+    EXPECT_EQ(result.request->body.size(), max_head_bytes * 2);
+}
+
+// The cap is a maximum, not a threshold.
+TEST(RequestReader, AcceptsABodyAtExactlyTheCap) {
+    RequestReader reader;
+    const auto result = read(reader, post_body(std::string(max_body_bytes, 'b')));
+    ASSERT_TRUE(result) << "unexpected error: " << result.error;
+    ASSERT_TRUE(result.request.has_value());
+    EXPECT_EQ(result.request->body.size(), max_body_bytes);
+}
+
+// Refused on the declaration alone, so the bytes are never buffered to find out.
+TEST(RequestReader, RejectsAContentLengthOverTheCap) {
+    EXPECT_EQ(content_length_error(std::to_string(max_body_bytes + 1)), RequestError::BodyTooLarge);
+}
+
+// Bounded before the multiply overflows, so it cannot wrap into a small length.
+TEST(RequestReader, RejectsAContentLengthTooLargeToHold) {
+    EXPECT_EQ(content_length_error("99999999999999999999"), RequestError::BodyTooLarge);
+}
+
+TEST(RequestReader, RejectsANonDigitContentLength) {
+    for (const std::string_view value : {"abc", "3a", "a3", "+3", "-3", "3.0", "0x3", "3 3"}) {
+        EXPECT_EQ(content_length_error(value), RequestError::Malformed) << "value: " << value;
+    }
+}
+
+// The comma spelling of a repeated field: rejected by the digit rule, not by
+// counting, because it arrives as one field.
+TEST(RequestReader, RejectsACommaSeparatedContentLength) {
+    EXPECT_EQ(content_length_error("3, 3"), RequestError::Malformed);
+}
+
+// A present field with no value is a syntax error, unlike an absent one.
+TEST(RequestReader, RejectsAnEmptyContentLength) {
+    EXPECT_EQ(content_length_error(""), RequestError::Malformed);
+}
+
+// Refused even though the two agree: only one framing directive may be believed.
+TEST(RequestReader, RejectsARepeatedContentLength) {
+    RequestReader reader;
+    const auto result = read(
+        reader, "POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\nContent-Length: 3\r\n\r\nabc");
+    EXPECT_EQ(result.error, RequestError::Malformed);
+}
+
+TEST(RequestReader, RejectsAnyTransferEncoding) {
+    for (const std::string_view coding : {"chunked", "gzip", "identity"}) {
+        RequestReader reader;
+        std::string bytes = "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: ";
+        bytes += coding;
+        bytes += "\r\n\r\n";
+        EXPECT_EQ(read(reader, bytes).error, RequestError::UnsupportedTransferEncoding)
+            << "coding: " << coding;
+    }
+}
+
+// Tested first, so the pair that smuggles a request past one recipient never
+// reaches the length rule at all.
+TEST(RequestReader, RejectsTransferEncodingAheadOfContentLength) {
+    RequestReader reader;
+    const auto result =
+        read(reader,
+             "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nContent-Length: 3\r\n"
+             "\r\nabc");
+    EXPECT_EQ(result.error, RequestError::UnsupportedTransferEncoding);
 }
 
 }  // namespace

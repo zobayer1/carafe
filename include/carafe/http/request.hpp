@@ -33,6 +33,10 @@ struct Request {
     Version version{};
     Headers headers;
 
+    // Empty for a declared zero and for no Content-Length alike: RFC 9112 §6.3
+    // gives them the same length. Only the headers still tell them apart.
+    std::string body;
+
     // Bound by the Router after the head is parsed, not by the parser.
     // Empty for a static route, and for a request no route claimed.
     Params params;

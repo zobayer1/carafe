@@ -52,6 +52,12 @@ Handler echo_params() {
     };
 }
 
+// Hands the body straight back, so a 200 proves the bytes reached the handler
+// rather than only that the head parsed.
+Handler echo_body() {
+    return [](const Request& request) { return text_response(200, request.body); };
+}
+
 Router routing(std::string_view path) {
     Router router;
     router.add(Method::Get, path, echo());
@@ -437,6 +443,64 @@ TEST(ServeConnection, StopsWhenTheClientIsAlreadyGone) {
     serve_connection(conn, router);
 
     SUCCEED();
+}
+
+TEST(ServeConnection, HandsTheBodyToTheHandler) {
+    auto pair = connected_pair();
+    send_all(
+        pair.first,
+        "POST /submit HTTP/1.1\r\nHost: example.test\r\nContent-Length: 11\r\n\r\nhello world");
+
+    Router router;
+    router.add(Method::Post, "/submit", echo_body());
+    const std::string response = serve_and_read(pair, router);
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 200 OK");
+    EXPECT_EQ(body_of(response), "hello world");
+}
+
+// The bug this closes, end to end: the body used to parse as the next request
+// line, so the GET behind it came back 501.
+TEST(ServeConnection, AnswersARequestPipelinedBehindABody) {
+    auto pair = connected_pair();
+    send_all(pair.first,
+             "POST /submit HTTP/1.1\r\nHost: example.test\r\nContent-Length: 3\r\n\r\nabc"
+             "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+
+    Router router;
+    router.add(Method::Post, "/submit", echo_body());
+    router.add(Method::Get, "/", echo());
+    const std::string response = serve_and_read(pair, router);
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 200 OK");
+    EXPECT_NE(response.find("abc"), std::string::npos);
+    EXPECT_NE(response.find("you asked for /"), std::string::npos);
+    EXPECT_EQ(response.find("501"), std::string::npos);
+}
+
+// Refused on the declared length, so no body bytes need arrive at all.
+TEST(ServeConnection, AnswersAnOversizedBodyWithFourThirteen) {
+    auto pair = connected_pair();
+    send_all(pair.first,
+             "POST /submit HTTP/1.1\r\nHost: example.test\r\nContent-Length: 1048577\r\n\r\n");
+
+    const std::string response = serve_and_read(pair, Router{});
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 413 Content Too Large");
+    EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
+}
+
+// No transfer coding is implemented, and one we cannot decode leaves nowhere to
+// resume from.
+TEST(ServeConnection, AnswersAChunkedRequestWithFiveOhOne) {
+    auto pair = connected_pair();
+    send_all(pair.first,
+             "POST /submit HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\n\r\n");
+
+    const std::string response = serve_and_read(pair, Router{});
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 501 Not Implemented");
+    EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
 }
 
 }  // namespace
