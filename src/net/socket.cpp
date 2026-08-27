@@ -32,8 +32,8 @@ Socket& Socket::operator=(Socket&& other) noexcept {
     return *this;
 }
 
-// Not const: a const Socket& reads as safe to share, and these bytes are gone from
-// the stream once taken. std::istream::read is non-const for the same reason.
+// Not const: a const Socket& reads as safe to share, and these bytes leave the
+// stream once taken. std::istream::read is non-const for the same reason.
 // NOLINTNEXTLINE(readability-make-member-function-const)
 ReadResult Socket::read(char* buffer, std::size_t size) {
     while (true) {
@@ -47,7 +47,7 @@ ReadResult Socket::read(char* buffer, std::size_t size) {
             return {0, std::nullopt};
         }
 
-        // A signal arriving mid-wait is not an outcome, just an interruption: ask again.
+        // EINTR is an interruption, not an outcome: ask again.
         if (errno != EINTR) {
             return {errno, std::nullopt};
         }
@@ -59,7 +59,7 @@ WriteResult Socket::write(std::string_view bytes) {
     while (!bytes.empty()) {
         const ssize_t written = ::send(fd_, bytes.data(), bytes.size(), MSG_NOSIGNAL);
         if (written == -1) {
-            // A signal arriving mid-write is not an outcome, just an interruption: ask again.
+            // EINTR is an interruption, not an outcome: ask again.
             if (errno != EINTR) {
                 return {errno};
             }

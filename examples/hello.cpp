@@ -3,7 +3,7 @@
 // docs/examples.md walks through what each one answers.
 //
 // Connections are served one at a time, to completion, and kept alive until the
-// client hangs up -- so a browser holding a connection open locks everyone else
+// client hangs up, so a browser holding a connection open locks everyone else
 // out. That is what the concurrency milestone is for.
 
 #include <carafe/app.hpp>
@@ -74,8 +74,8 @@ int main() {
         return text_response(200, std::move(body));
     });
 
-    // No body of its own, and the same path under three verbs -- which is what
-    // puts more than one method in the allow: of a 405.
+    // No body of its own, and one more verb on a path that already has several,
+    // which is what puts a real list in the allow: of a 405.
     app.del("/store/<key>", [](const Request& request) {
         std::string body{request.params.get("key").value_or("?")};
         body += " deleted\n";

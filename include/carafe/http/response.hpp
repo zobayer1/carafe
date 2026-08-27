@@ -13,10 +13,9 @@ struct Response {
 
     std::string body;
 
-    // Content-Length is computed here and any the caller added is dropped: it is
-    // the one number a client cannot recover from when it is wrong. `with_body`
-    // false stops after the head, which is what HEAD asks for -- and why the
-    // length still describes the body a GET would have carried.
+    // Content-Length is computed here and any the caller added is dropped: the one
+    // number a client cannot recover from when it is wrong. `with_body` false stops
+    // after the head for HEAD, so the length still describes the GET body.
     [[nodiscard]] std::string serialize(bool with_body = true) const;
 };
 
@@ -24,8 +23,7 @@ struct Response {
 // phrase rather than a guess. RFC 7230 allows zero characters there.
 [[nodiscard]] std::string_view status_message(int status) noexcept;
 
-// text/plain with the body attached, which is what a handler writing prose
-// wants and what it would otherwise assemble by hand every time.
+// text/plain with the body attached.
 [[nodiscard]] Response text_response(int status, std::string body);
 
 }  // namespace carafe::http

@@ -215,7 +215,7 @@ TEST(RequestReader, ResetsFieldsBetweenRequests) {
 
 // The per-request budgets reset with the phase. Without that, a long-lived
 // connection starts rejecting requests that are individually well within both
-// caps -- and no branch is missing, so only feeding two requests finds it.
+// caps. No branch is missing, so only feeding two requests finds it.
 TEST(RequestReader, ResetsBudgetsBetweenRequests) {
     const std::string head = "GET / HTTP/1.1\r\nHost: x\r\n" + pad_fields(60, 600) + "\r\n";
     ASSERT_LT(head.size(), max_head_bytes);

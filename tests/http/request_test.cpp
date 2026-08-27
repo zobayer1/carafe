@@ -9,7 +9,7 @@ using carafe::http::method_name;
 using carafe::http::Params;
 
 // The names go on the wire in an Allow header, where they are case-sensitive
-// tokens rather than labels -- a lowercase one is a different method, and a
+// tokens rather than labels: a lowercase one is a different method, and a
 // misspelled one is no method at all.
 TEST(MethodName, SpellsEveryMethodCarafeParses) {
     EXPECT_EQ(method_name(Method::Get), "GET");
@@ -74,8 +74,8 @@ TEST(Params, TellsAnEmptyValueApartFromNoValue) {
 }
 
 // Unlike a header name, which arrives in whatever case the client chose, a
-// parameter name is written twice by the same person -- in the pattern and in
-// the handler. Folding case would only hide a typo.
+// parameter name is written twice by the same person, in the pattern and in the
+// handler. Folding case would only hide a typo.
 TEST(Params, MatchesNamesCaseSensitively) {
     const Params params{{{"id", "42"}}};
 

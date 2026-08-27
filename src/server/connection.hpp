@@ -11,10 +11,9 @@
 
 namespace carafe::server {
 
-// Two failures rather than one, because they call for opposite actions: a
-// malformed head gets a status written back, while a failed read means there is
-// nobody left to write to. An empty request with neither set is the client
-// having finished.
+// Two failures, not one, because they call for opposite actions: a malformed head
+// gets a status written back, a failed read means nobody is left to write to. An
+// empty request with neither set is the client having finished.
 struct ConnectionResult {
     http::RequestError error = http::RequestError::None;
     int os_error = 0;
@@ -29,9 +28,9 @@ struct ConnectionResult {
     }
 };
 
-// A socket and the parser state for the byte stream coming off it. The two are
-// members rather than parameters because a half-received head lives in the
-// reader between reads, and sharing one would splice two clients into one request.
+// A socket and the parser state for the bytes coming off it. Members rather than
+// parameters: a half-received head lives in the reader between reads, and sharing
+// one would splice two clients into one request.
 class Connection {
 public:
     explicit Connection(net::Socket socket);

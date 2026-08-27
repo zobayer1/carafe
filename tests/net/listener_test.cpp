@@ -127,7 +127,7 @@ TEST(ListenOn, ReportsTheRequestedPortWhenGivenOne) {
     EXPECT_EQ(result.listener->port(), port);
 }
 
-// SO_REUSEADDR permits binding over TIME_WAIT, not over a live listener -- that
+// SO_REUSEADDR permits binding over TIME_WAIT, not over a live listener. That
 // would need SO_REUSEPORT, which we deliberately do not set.
 TEST(ListenOn, RejectsAPortAlreadyBeingListenedOn) {
     const auto held = listen_on(0);
@@ -212,7 +212,7 @@ TEST(Accept, ReturnsASocketForAWaitingClient) {
     EXPECT_TRUE(result.client->valid());
 }
 
-// A valid descriptor is not enough -- it has to be the far end of this connection.
+// A valid descriptor is not enough: it has to be the far end of this connection.
 TEST(Accept, ReadsWhatTheClientSent) {
     auto held = listen_on(0);
     ASSERT_TRUE(held);

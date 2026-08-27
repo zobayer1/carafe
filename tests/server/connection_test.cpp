@@ -106,8 +106,8 @@ TEST(Connection, ReturnsASecondRequestAlreadyInTheBuffer) {
     EXPECT_EQ(second.request->target, "/two");
 }
 
-// A parse failure travels in `error`, leaving os_error clear -- the caller still
-// has a socket and can answer with a status.
+// A parse failure travels in `error`, leaving os_error clear: the caller still has
+// a socket and can answer with a status.
 TEST(Connection, ReportsTheParseErrorForAMalformedHead) {
     auto pair = connected_pair();
     send_all(pair.first, "NOTAREQUEST\r\n\r\n");

@@ -17,7 +17,7 @@ namespace carafe::http {
 
 namespace {
 
-// Maps a method token to Method; nullopt means we do not implement that verb.
+// nullopt is a verb we do not implement, not a malformed token.
 [[nodiscard]] std::optional<Method> lookup_method(std::string_view token) noexcept {
     static constexpr std::array<std::pair<std::string_view, Method>, 9> table{
         {{"GET", Method::Get},
@@ -118,17 +118,17 @@ namespace {
     return ch == '\t' || (ch >= 0x20 && ch != 0x7F);
 }
 
-// A bare '%' is not a byte a URI may carry, so there is no lenient reading to
-// fall back to. Rejecting the whole target here is what keeps the router's
-// decoder from ever meeting an escape that does not decode; Router::find copes
-// with one anyway, because no type says a target arrived through this function.
+// A bare '%' is not a byte a URI may carry, so there is no lenient reading to fall
+// back to. Rejecting the target keeps the router's decoder from ever meeting an
+// escape that does not decode. Router::find copes anyway, since no type says a
+// target came through here.
 [[nodiscard]] bool has_valid_escapes(std::string_view target) noexcept {
     for (std::size_t i = 0; i < target.size(); ++i) {
         if (target[i] != '%') {
             continue;
         }
-        // The size test guards both indexings: string_view does not bounds check,
-        // so a '%' in the last two bytes would otherwise read past the end.
+        // The size test guards both indexings: string_view does not bounds check, so
+        // a '%' in the last two bytes would read past the end.
         if (i + 2 >= target.size() || !is_hex_digit(static_cast<unsigned char>(target[i + 1])) ||
             !is_hex_digit(static_cast<unsigned char>(target[i + 2]))) {
             return false;
@@ -140,8 +140,7 @@ namespace {
 
 }  // namespace
 
-// Validates entirely on views; the one allocation happens only once the line is
-// known to be good.
+// Validated entirely on views: the one allocation waits until the line is good.
 RequestLineResult parse_request_line(std::string_view line) {
     const auto sp1 = line.find(' ');
     if (sp1 == std::string_view::npos) {
@@ -153,12 +152,10 @@ RequestLineResult parse_request_line(std::string_view line) {
         return {ParseError::Malformed, {}};
     }
 
-    // Check for control characters in the entire line.
     if (contains_ctl(line)) {
         return {ParseError::Malformed, {}};
     }
 
-    // Check for extra spaces or malformed trailing data.
     if (line.find(' ', sp2 + 1) != std::string_view::npos) {
         return {ParseError::Malformed, {}};
     }
@@ -171,8 +168,8 @@ RequestLineResult parse_request_line(std::string_view line) {
         return {ParseError::Malformed, {}};
     }
 
+    // Version first: a 505 outranks anything later in the line.
     Version version{};
-    // Version test first: ensure that we understand the protocol version.
     if (const auto err = parse_version(version_part, version); err != ParseError::None) {
         return {err, {}};
     }
@@ -191,8 +188,6 @@ RequestLineResult parse_request_line(std::string_view line) {
     return {ParseError::None, RequestLine{*method_opt, std::string{target_part}, version}};
 }
 
-// Parses "field-name ':' OWS field-value OWS". `line` must arrive with its
-// CRLF removed and length-capped by the caller; capping here would be too late.
 std::optional<HeaderField> parse_header_field(std::string_view line) {
     // A colon is ordinary content in a value, so only the first one splits.
     const auto colon_pos = line.find(':');
@@ -218,8 +213,7 @@ std::optional<HeaderField> parse_header_field(std::string_view line) {
 
     const std::string_view value_part = line.substr(colon_pos + 1);
 
-    // OWS is optional on both sides, and `end > start` keeps an all-OWS value
-    // from walking the second scan off the front.
+    // `end > start` keeps an all-OWS value from walking the second scan off the front.
     std::size_t start = 0;
     while (start < value_part.size() && is_ows(static_cast<unsigned char>(value_part[start]))) {
         ++start;

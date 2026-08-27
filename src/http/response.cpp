@@ -46,16 +46,16 @@ std::string Response::serialize(bool with_body) const {
     out += "\r\n";
 
     for (const HeaderField& field : headers) {
-        // Ours is written below from body.size(). A caller's is either the same
-        // number or a lie the client has no way to recover from.
+        // Written below from body.size(). A caller's is the same number or a lie the
+        // client cannot recover from.
         if (field.name == "content-length") {
             continue;
         }
         out += field.name + ": " + field.value + "\r\n";
     }
 
-    // Lowercased like every other name here, since Headers::add lowercases the
-    // ones it is given and a mixed wire implies a distinction HTTP does not make.
+    // Lowercased like every other name here: Headers::add folds the ones it is
+    // given, and a mixed wire implies a distinction HTTP does not make.
     out += "content-length: " + std::to_string(body.size()) + "\r\n\r\n";
 
     if (with_body) {

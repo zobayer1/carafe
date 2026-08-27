@@ -11,8 +11,7 @@ namespace carafe::http {
 
 namespace {
 
-// Compares a stored lowercased name to a lookup name, ignoring case.
-// The stored name is lowercased, so the lookup name is lowercased on-the-fly.
+// The stored name is already lowercased, so only the lookup name is folded.
 [[nodiscard]] bool matches_lowered(std::string_view stored_lower,
                                    std::string_view lookup_name) noexcept {
     if (stored_lower.size() != lookup_name.size()) {

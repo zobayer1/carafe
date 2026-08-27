@@ -16,10 +16,8 @@ namespace carafe::server {
 
 namespace {
 
-// The mapping RequestError was written for: every value has carried its status
-// in a comment since the enum existed, and nothing until now could act on it.
-// No default label, so adding an enumerator becomes a warning here rather than
-// a silent 400.
+// No default label, so a new enumerator breaks this build rather than becoming a
+// silent 400.
 int status_for(http::RequestError error) {
     switch (error) {
         case http::RequestError::UnknownMethod:
@@ -42,8 +40,7 @@ int status_for(http::RequestError error) {
     return 400;
 }
 
-// The body names the status, because a bare 404 tells a person reading a
-// terminal nothing at all.
+// The body names the status: a bare 404 tells a terminal reader nothing.
 http::Response status_response(int status) {
     std::string body = std::to_string(status);
     body += ' ';
@@ -63,7 +60,7 @@ http::Response parse_error_response(http::RequestError error, const bool stream_
 }
 
 // Comma-separated, as RFC 9110 spells the field. Method names are case-sensitive
-// tokens: these stay uppercase even though every field name we emit is lowered.
+// tokens, so these stay uppercase though every field name we emit is lowered.
 std::string allow_value(const std::vector<http::Method>& methods) {
     std::string value;
     for (const http::Method method : methods) {
@@ -105,7 +102,7 @@ void serve_connection(Connection& conn, const Router& router) {
                 return;  // nobody left to answer
             }
 
-            // Only the reader knows whether it can find the next request line, and
+            // Only the reader knows whether the next request line is findable, and
             // the reply just sent told the client which answer it gave.
             if (!result.stream_continues) {
                 return;
@@ -120,8 +117,8 @@ void serve_connection(Connection& conn, const Router& router) {
         http::Request& request = *result.request;
         auto match = router.find(request.method, request.target);
 
-        // Whatever the router bound, unconditionally: an unmatched request captured
-        // nothing, so this costs an empty vector rather than a branch.
+        // Unconditional: an unmatched request captured nothing, so this costs an
+        // empty vector rather than a branch.
         request.params = std::move(match.params);
 
         const http::Response response =

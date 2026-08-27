@@ -11,9 +11,8 @@ Connection::Connection(net::Socket socket) : socket_(std::move(socket)) {}
 
 ConnectionResult Connection::next_request() {
     while (true) {
-        // Parsed before read, not after: the previous read may already have carried
-        // this request, and a pipelining client will not send more until it is
-        // answered. Reading first would wait for bytes that have already arrived.
+        // Parsed before read: the previous read may already have carried this
+        // request, and a pipelining client sends no more until it is answered.
         auto parsed = reader_.next_request();
 
         // Anything but "nothing yet": a failure carries no request, a success
@@ -27,8 +26,8 @@ ConnectionResult Connection::next_request() {
             return {http::RequestError::None, chunk.os_error, std::nullopt, false};
         }
 
-        // A close part-way through a head is reported as a finished connection
-        // rather than a bad request: the peer that hung up cannot be told either way.
+        // A close part-way through a head is a finished connection, not a bad
+        // request: the peer that hung up cannot be told either way.
         if (!chunk.bytes) {
             return {};
         }

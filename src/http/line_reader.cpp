@@ -15,8 +15,8 @@ constexpr std::size_t max_line_length = 8192;
 constexpr std::string_view crlf{"\r\n"};
 
 void LineReader::append(std::string_view bytes) {
-    // Only once the dead prefix outweighs what is left, so no compaction moves
-    // more bytes than it reclaims. Both indices are offsets, so both shift.
+    // Only once the dead prefix outweighs what is left, so no compaction moves more
+    // bytes than it reclaims. Both indices are offsets, so both shift.
     if (begin_ > 0 && (begin_ * 2 >= buffer_.size())) {
         buffer_.erase(0, begin_);
         scanned_ -= begin_;
@@ -35,8 +35,7 @@ LineResult LineReader::next_line() {
             return LineResult{LineError::LineTooLong, {}};
         }
 
-        // Resume behind a possible half-terminator, comparing by addition so
-        // the subtraction cannot wrap.
+        // Resume behind a possible half-terminator, by addition so it cannot wrap.
         constexpr std::size_t lookback = crlf.size() - 1;
         if (buffer_.size() < begin_ + lookback) {
             scanned_ = begin_;
@@ -47,8 +46,8 @@ LineResult LineReader::next_line() {
         return LineResult{LineError::None, std::nullopt};
     }
 
-    // Checked here too, or one large append walks past a cap that guards only
-    // the search failure.
+    // Checked here too, or one large append walks past a cap guarding only the
+    // search failure.
     if (crlf_pos - begin_ > max_line_length) {
         return LineResult{LineError::LineTooLong, {}};
     }
@@ -67,9 +66,6 @@ std::optional<std::string_view> LineReader::take(std::size_t n) {
 
     auto bytes = std::string_view(buffer_.data() + begin_, n);
     begin_ += n;
-    // scanned_ says no terminator lies before it, and taken bytes were never
-    // scanned. Left behind begin_, the next search finds a CRLF inside them and
-    // measures a line from a start that is already past its end.
     scanned_ = begin_;
 
     return bytes;

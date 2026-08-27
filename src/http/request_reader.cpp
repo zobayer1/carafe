@@ -13,7 +13,7 @@
 
 namespace carafe::http {
 
-// Request line plus every field line. The per-line cap bounds one field; this
+// Request line plus every field line: the per-line cap bounds one field, this
 // bounds how many a client may stack up.
 constexpr std::size_t max_head_bytes = 65536;
 
@@ -73,8 +73,7 @@ struct BodyLength {
     }
 
     // Refused even when the values agree: §5.3 makes this and "3, 3" the same
-    // request, and a recipient resolving them differently is how one gets
-    // smuggled inside another.
+    // request, and recipients resolving them differently is how one gets smuggled.
     if (headers.count("content-length") > 1) {
         return {RequestError::Malformed, 0};
     }
@@ -123,8 +122,7 @@ void RequestReader::append(std::string_view bytes) {
 std::optional<RequestResult> RequestReader::handle_request_line(std::string_view line) {
     RequestLineResult parsed = parse_request_line(line);
 
-    // No default: a new ParseError member must break this build rather than
-    // fall through to a generic 400.
+    // No default: a new ParseError has to break this build, not become a 400.
     switch (parsed.error) {
         case ParseError::None:
             break;
@@ -148,8 +146,7 @@ std::optional<RequestResult> RequestReader::handle_field_line(std::string_view l
         return complete_head();
     }
 
-    // Counted before parsing, so a flood of fields costs the attacker more than
-    // it costs us.
+    // Counted before parsing, so a flood costs the attacker more than it costs us.
     if (++field_count_ > max_fields) {
         return fail(RequestError::TooManyHeaders);
     }
@@ -165,8 +162,7 @@ std::optional<RequestResult> RequestReader::handle_field_line(std::string_view l
 
 std::optional<RequestResult> RequestReader::complete_head() {
     // RFC 9112 §3.2 requires exactly one Host on 1.1. Two are ambiguous at any
-    // version, and ambiguity about the target host is a routing decision an
-    // attacker would be making.
+    // version, and that ambiguity is a routing decision an attacker would make.
     const auto host_count = request_.headers.count("host");
     if (host_count > 1 || (host_count == 0 && request_.version == Version::Http11)) {
         return fail(RequestError::Malformed);
@@ -178,13 +174,11 @@ std::optional<RequestResult> RequestReader::complete_head() {
     }
     body_bytes_ = body.bytes;
 
-    // Over the limit but inside the drain ceiling, so the length is known and
-    // small enough to read and throw away.
+    // Over the limit but inside the drain ceiling: known, and small enough to drop.
     if (body_bytes_ > max_body_bytes) {
         return refuse(RequestError::BodyTooLarge);
     }
 
-    // Nothing to wait for, so the request is complete at the blank line.
     if (body_bytes_ == 0) {
         return finish_request();
     }
@@ -219,8 +213,7 @@ RequestResult RequestReader::next_request() {
 
         const LineResult line_res = line_reader_.next_line();
 
-        // One LineError, two answers: only this layer knows which line it asked
-        // for, which is why the ambiguity ends here.
+        // One LineError, two answers: only this layer knows which line it asked for.
         if (line_res.error == LineError::LineTooLong) {
             return fail(phase_ == Phase::RequestLine ? RequestError::RequestLineTooLong
                                                      : RequestError::HeaderTooLong);

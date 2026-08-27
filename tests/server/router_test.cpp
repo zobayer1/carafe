@@ -204,7 +204,7 @@ TEST(Router, KeepsSeparateRoutesApart) {
 }
 
 // The handler is called with the request the caller passes, not with the one it
-// was registered against -- there is no such thing.
+// was registered against: there is no such thing.
 TEST(Router, PassesTheRequestThroughToTheHandler) {
     Router router;
     router.add(Method::Get, "/echo", [](const Request& request) {
@@ -245,7 +245,7 @@ TEST(Router, AllowsOnlyTheMethodRegistered) {
     EXPECT_EQ(router.allowed_methods("/submit"), Methods{Method::Post});
 }
 
-// find() answers HEAD from a GET route, so Allow has to say so -- otherwise the
+// find() answers HEAD from a GET route, so Allow has to say so. Otherwise the
 // field contradicts what the next request would actually get.
 TEST(Router, AllowsHeadWhereverGetIsAllowed) {
     Router router;
@@ -274,8 +274,8 @@ TEST(Router, ListsAMethodOnceHoweverOftenItIsRegistered) {
     EXPECT_EQ(router.allowed_methods("/hello"), (Methods{Method::Get, Method::Head}));
 }
 
-// Two ways to arrive at Head -- the Get fallback and an explicit route -- and
-// they must not both put it in the list.
+// Two ways to arrive at Head, the Get fallback and an explicit route, and they
+// must not both put it in the list.
 TEST(Router, ListsHeadOnceWhenItIsRegisteredAlongsideGet) {
     Router before;
     before.add(Method::Get, "/hello", answering("get"));
@@ -450,8 +450,8 @@ TEST(Router, TreatsAnEmptyParameterNameAsLiteralText) {
 }
 
 // Both brackets are required, so a segment carrying only one of them is text.
-// Neither character can arrive in a real request target -- RFC 3986 excludes
-// them from a path -- which is exactly why they are safe to spell patterns with.
+// Neither character can arrive in a real request target, since RFC 3986 excludes
+// them from a path, which is exactly why they are safe to spell patterns with.
 TEST(Router, TreatsAHalfBracketedSegmentAsLiteralText) {
     Router router;
     router.add(Method::Get, "/users/<id", answering("open"));
@@ -476,7 +476,7 @@ TEST(Router, CapturesBothWhenAPatternBindsOneNameTwice) {
 }
 
 // The fallback is remembered a pass of the loop before it is returned, and the
-// captures have to be remembered with it -- they cannot be recomputed later.
+// captures have to be remembered with it: they cannot be recomputed later.
 // A capture is what the client meant, not the spelling it travelled in: RFC 3986
 // 2.1 makes "%20" a space, and 6.2.2.1 makes both hex cases the same byte.
 TEST(Router, DecodesPercentEscapesInACapture) {
@@ -521,7 +521,7 @@ TEST(Router, DoesNotTreatPlusAsASpace) {
 }
 
 // Unreachable through a served request, since the parser answers all three with a
-// 400 -- but find promises nothing about its target, and the last two are where a
+// 400. But find promises nothing about its target, and the last two are where a
 // decoder that trusted the parser would read past the end of one.
 TEST(Router, CopiesAnUndecodableEscapeLiterally) {
     Router router;

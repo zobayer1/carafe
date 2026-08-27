@@ -205,8 +205,8 @@ TEST(ParseHeaderField, PreservesValueCase) {
     expect_header_field("Host:XA", "host", "XA");
 }
 
-// OWS around the value is optional, and it is SP or HTAB -- a trim written
-// against ' ' alone passes the first of these and fails the second.
+// OWS around the value is optional, and it is SP or HTAB. A trim written against
+// ' ' alone passes the first of these and fails the second.
 TEST(ParseHeaderField, TrimsOptionalWhitespaceAroundTheValue) {
     expect_header_field("Host:   xs", "host", "xs");
     expect_header_field("X-Tab:\t x \t", "x-tab", "x");

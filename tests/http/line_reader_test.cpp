@@ -60,7 +60,7 @@ TEST(LineReader, EmptyReaderYieldsNothing) {
     EXPECT_TRUE(drain(reader).empty());
 }
 
-// The terminator is consumed, not returned -- the parser must never see it.
+// The terminator is consumed, not returned: the parser must never see it.
 TEST(LineReader, StripsTheTerminator) {
     LineReader reader;
     reader.append("GET / HTTP/1.1\r\n");

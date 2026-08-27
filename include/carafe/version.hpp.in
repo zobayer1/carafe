@@ -1,6 +1,6 @@
 // This file is a template. CMake expands the @VARIABLES@ and writes the result
-// to ${PROJECT_BINARY_DIR}/generated/carafe/version.hpp -- do not include this
-// file directly, include <carafe/version.hpp>.
+// to ${PROJECT_BINARY_DIR}/generated/carafe/version.hpp. Do not include this file
+// directly; include <carafe/version.hpp>.
 #pragma once
 
 #include <string_view>

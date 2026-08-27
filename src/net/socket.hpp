@@ -36,15 +36,12 @@ public:
 
     ~Socket();
 
-    // Prevent dual ownership of the socket fd and use-after-close
     Socket(const Socket&) = delete;
     Socket& operator=(const Socket&) = delete;
 
-    // Move semantics to transfer ownership of the socket fd
     Socket(Socket&&) noexcept;
     Socket& operator=(Socket&&) noexcept;
 
-    // Accessor for the underlying file descriptor
     [[nodiscard]] int get() const noexcept {
         return fd_;
     }
@@ -53,16 +50,14 @@ public:
         return fd_ != -1;
     }
 
-    // Up to size bytes into the caller's buffer. The view in the result points
+    // Up to `size` bytes into the caller's buffer. The view in the result points
     // into that buffer and dies with it.
     [[nodiscard]] ReadResult read(char* buffer, std::size_t size);
 
-    // All bytes from the caller's buffer. The caller must ensure that the buffer
-    // remains valid until the write completes.
+    // Every byte or a failure: EINTR is retried, so a short write never surfaces.
     [[nodiscard]] WriteResult write(std::string_view bytes);
 
 private:
-    // The file descriptor owned by this Socket. -1 means invalid socket.
     int fd_ = -1;
 };
 

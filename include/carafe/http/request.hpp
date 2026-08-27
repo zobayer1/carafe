@@ -21,9 +21,8 @@ struct PathParam {
 struct Params {
     std::vector<PathParam> entries;
 
-    // The first entry with this name, as Headers::get answers: a pattern may bind
-    // the same name twice, and the first is the one that reads naturally.
-    // The view is valid while entries is unmodified.
+    // First entry with this name, as Headers::get answers: a pattern may bind one
+    // name twice. Valid while entries is unmodified.
     [[nodiscard]] std::optional<std::string_view> get(std::string_view name) const noexcept;
 };
 
@@ -34,11 +33,11 @@ struct Request {
     Headers headers;
 
     // Empty for a declared zero and for no Content-Length alike: RFC 9112 §6.3
-    // gives them the same length. Only the headers still tell them apart.
+    // gives them the same length. Only the headers tell them apart.
     std::string body;
 
-    // Bound by the Router after the head is parsed, not by the parser.
-    // Empty for a static route, and for a request no route claimed.
+    // Bound by the Router, not the parser. Empty for a static route and for a
+    // request no route claimed.
     Params params;
 };
 

@@ -15,8 +15,8 @@ namespace {
 
 using size_type = std::string_view::size_type;
 
-// The request-target carries the query; routing does not use it. Fragments never
-// arrive -- clients strip them before sending -- so '?' is the only cut.
+// The request-target carries the query; routing does not use it. Clients strip
+// fragments before sending, so '?' is the only cut.
 std::string_view path_of(std::string_view target) noexcept {
     return target.substr(0, target.find('?'));
 }
@@ -35,17 +35,16 @@ std::string_view path_of(std::string_view target) noexcept {
     return -1;
 }
 
-// An escape that is not "%" HEXDIG HEXDIG is copied as it stands. The parser
-// rejects those before a request ever reaches here, so the rule is unreachable in
-// a served request -- but find() states no precondition on its target, and a
-// decoder that assumed one would read past the end of a view for "%4".
+// An escape that is not "%" HEXDIG HEXDIG is copied as it stands. Unreachable in a
+// served request, since the parser rejects those first. Even so, find() states no
+// precondition, and a decoder assuming one reads past the end for "%4".
 [[nodiscard]] std::string percent_decode(std::string_view text) {
     std::string decoded;
     decoded.reserve(text.size());  // decoding only ever shrinks
 
     for (size_type i = 0; i < text.size(); ++i) {
-        // Two steps rather than one condition, because text[i + 2] has to stay
-        // behind the bounds test and only the first line carries it.
+        // Two steps, not one condition: text[i + 2] has to stay behind the bounds
+        // test, and only the first line carries it.
         const int high = i + 2 < text.size() ? hex_value(text[i + 1]) : -1;
         const int low = high < 0 ? -1 : hex_value(text[i + 2]);
 
@@ -59,9 +58,9 @@ std::string_view path_of(std::string_view target) noexcept {
     return decoded;
 }
 
-// One definition of what "this route serves this path" means, because find() and
-// allowed_methods() must never disagree about it. Captures into *out only on
-// success, so a half-match leaves no debris; null asks for the yes or no alone.
+// One definition of "this route serves this path", so find() and allowed_methods()
+// cannot disagree. Captures into *out on success only, so a half-match leaves no
+// debris; null asks for the yes or no alone.
 bool matches(const Pattern& pattern, std::string_view path, http::Params* out) {
     http::Params captured;
     size_type index = 0;
@@ -70,7 +69,6 @@ bool matches(const Pattern& pattern, std::string_view path, http::Params* out) {
         const size_type end = path.find('/', start);
         const std::string_view piece = path.substr(start, end - start);
 
-        // The path has more segments than the pattern describes.
         if (index == pattern.size()) {
             return false;
         }
@@ -157,8 +155,8 @@ Match Router::find(http::Method method, std::string_view target) const {
         }
 
         // RFC 9110: HEAD is GET without the body. Remembered rather than returned, so
-        // an explicit HEAD route still beats it whenever it was registered -- and the
-        // captures go with it, since this pass of the loop is the only place they exist.
+        // an explicit HEAD route still beats it. Its captures go too, since they
+        // exist only during this pass of the loop.
         if (method == http::Method::Head && route.method == http::Method::Get &&
             fallback == nullptr) {
             fallback = &route.handler;
@@ -184,8 +182,8 @@ std::vector<http::Method> Router::allowed_methods(std::string_view target) const
             allowed.push_back(route.method);
         }
 
-        // Listed beside the Get that implies it rather than appended, so the order
-        // still reads as the order the routes were registered in.
+        // Beside the Get that implies it, not appended, so the order still reads as
+        // registration order.
         if (route.method == http::Method::Get && !contains(allowed, http::Method::Head)) {
             allowed.push_back(http::Method::Head);
         }

@@ -84,7 +84,7 @@ void send_all(const Socket& sock, std::string_view bytes) {
 
 // Serves the connection, then closes the server end so the client can read to end
 // of stream. That is what makes "the whole response" a well defined thing to
-// assert on -- a live connection would otherwise just block waiting for more.
+// assert on: a live connection would otherwise just block waiting for more.
 std::string serve_and_read(std::pair<Socket, Socket>& pair, const Router& router) {
     // The client half-closes first: it has said all it intends to. Without that a
     // keep-alive responder is still waiting for the next request, quite correctly,
@@ -174,8 +174,8 @@ TEST(ServeConnection, AnswersAHeadWithTheSameLengthAndNoBody) {
     EXPECT_TRUE(body_of(head).empty());
 }
 
-// Answerable, so it is answered -- and then closed, because there is no way to
-// find where the next request starts in a stream that failed to parse.
+// Answerable, so it is answered, then closed: there is no way to find where the
+// next request starts in a stream that failed to parse.
 TEST(ServeConnection, AnswersAMalformedHeadWithFourHundredAndCloses) {
     auto pair = connected_pair();
     send_all(pair.first, "NOTAREQUEST\r\n\r\n");
@@ -276,8 +276,8 @@ TEST(ServeConnection, AnswersAKnownPathUnderAnotherMethodWithFourOhFive) {
     EXPECT_NE(response.find("allow: POST\r\n"), std::string::npos);
 }
 
-// Every method the path serves, in one field, comma-separated -- and HEAD among
-// them, because the GET route really does answer it.
+// Every method the path serves, in one field, comma-separated, with HEAD among
+// them because the GET route really does answer it.
 TEST(ServeConnection, NamesEveryMethodThePathServesOnAFourOhFive) {
     auto pair = connected_pair();
     send_all(pair.first, "PUT /thing HTTP/1.1\r\nHost: example.test\r\n\r\n");
@@ -294,7 +294,7 @@ TEST(ServeConnection, NamesEveryMethodThePathServesOnAFourOhFive) {
 }
 
 // The field names methods for a resource, so a path that has none has nothing to
-// say -- an empty Allow would claim the resource exists and serves nothing.
+// say: an empty Allow would claim the resource exists and serves nothing.
 TEST(ServeConnection, SendsNoAllowWithAFourOhFour) {
     auto pair = connected_pair();
     send_all(pair.first, "GET /missing HTTP/1.1\r\nHost: example.test\r\n\r\n");
@@ -324,7 +324,7 @@ TEST(ServeConnection, SendsAllowOnAFourOhFiveToHeadWithoutABody) {
 }
 
 // A 404 is not a parse failure. The stream is still synchronised, so the client
-// may ask for something else on the same connection -- which is why the routing
+// may ask for something else on the same connection, which is why the routing
 // statuses carry no connection: close.
 TEST(ServeConnection, KeepsTheConnectionOpenAfterAFourOhFour) {
     auto pair = connected_pair();
@@ -408,7 +408,7 @@ TEST(ServeConnection, DoesNotCarryParametersIntoTheNextRequest) {
 }
 
 // A client that half-closes without sending anything is finished, not broken, so
-// it gets no reply at all -- not even a 400.
+// it gets no reply at all, not even a 400.
 TEST(ServeConnection, WritesNothingWhenTheClientFinishesFirst) {
     auto pair = connected_pair();
 
@@ -500,7 +500,7 @@ TEST(ServeConnection, AnswersAnOversizedBodyWithoutClosing) {
 
 // What the refusal buys, and the only place it is visible: the request behind a
 // dropped body is served normally. The body outgrows any socket buffer, so it
-// cannot be queued before the server runs -- a writer feeds it while the server
+// cannot be queued before the server runs. A writer feeds it while the server
 // drains, which is what a real client does anyway.
 TEST(ServeConnection, ServesTheRequestBehindARefusedBody) {
     auto pair = connected_pair();

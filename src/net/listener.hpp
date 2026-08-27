@@ -8,9 +8,8 @@
 
 namespace carafe::net {
 
-// One failure channel, so os_error alone answers whether this worked -- the same
-// test ReadResult and WriteResult use. `client` is engaged exactly when os_error
-// is zero, but saying so twice would invite the two to disagree.
+// One failure channel, as ReadResult and WriteResult have: `client` is engaged
+// exactly when os_error is zero, and saying so twice would invite disagreement.
 struct AcceptResult {
     int os_error = 0;
     std::optional<Socket> client;
@@ -20,8 +19,8 @@ struct AcceptResult {
     }
 };
 
-// A socket already listening, and the port it is bound to. The port is a member
-// because binding port 0 lets the kernel choose, and nothing else records the choice.
+// A socket already listening, and its port. The port is a member because binding
+// port 0 lets the kernel choose, and nothing else records the choice.
 class Listener {
 public:
     Listener(Socket sock, std::uint16_t port) noexcept : socket_(std::move(sock)), port_(port) {}
@@ -37,8 +36,7 @@ private:
     std::uint16_t port_ = 0;
 };
 
-// One value per syscall that can fail. Which call failed is all this says;
-// os_error says why.
+// One value per syscall that can fail: which call, not why. os_error says why.
 enum class ListenError {
     None,
     SocketFailed,
@@ -48,8 +46,8 @@ enum class ListenError {
 };
 
 // Two states, unlike RequestResult: a listener, or the reason there is none.
-// os_error is the errno at the failing call, since BindFailed alone cannot tell
-// a port already taken from one this user may not have.
+// os_error is errno at the failing call: BindFailed alone cannot tell a port
+// already taken from one this user may not have.
 struct ListenResult {
     ListenError error = ListenError::None;
     int os_error = 0;

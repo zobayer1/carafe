@@ -23,8 +23,8 @@ using carafe::test::AlarmIn;
 using carafe::test::alarms_delivered;
 using carafe::test::mask_alarm;
 
-// AF_UNIX needs no address, port, or network stack -- the cheapest real
-// descriptor, and what it connects to never matters here.
+// AF_UNIX needs no address, port, or network stack: the cheapest real descriptor,
+// and what it connects to never matters here.
 int make_fd() {
     const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     EXPECT_NE(fd, -1);
@@ -36,7 +36,7 @@ bool is_open(int fd) {
     return ::fcntl(fd, F_GETFD) != -1;
 }
 
-// Two connected sockets with no address, port, or listener in sight -- read only
+// Two connected sockets with no address, port, or listener in sight: read only
 // needs something with a far end.
 std::pair<Socket, Socket> connected_pair() {
     std::array<int, 2> fds{-1, -1};
@@ -324,7 +324,7 @@ TEST(SocketWrite, SucceedsWithoutSendingAnythingWhenGivenNoBytes) {
     EXPECT_EQ(errno, EAGAIN);
 }
 
-// The MSG_NOSIGNAL test. Without that flag this does not fail -- SIGPIPE kills the
+// The MSG_NOSIGNAL test. Without that flag this does not fail: SIGPIPE kills the
 // whole process, which is how a server dies when one client hangs up early.
 TEST(SocketWrite, ReportsBrokenPipeWhenThePeerIsGone) {
     auto [reader, writer] = connected_pair();

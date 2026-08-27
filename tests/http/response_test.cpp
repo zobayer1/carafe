@@ -112,7 +112,7 @@ TEST(Response, CallerContentLengthIsReplacedRatherThanRepeated) {
     EXPECT_EQ(wire.find("999"), std::string::npos);
 }
 
-// Headers lowercases on the way in, and that is what reaches the wire -- the
+// Headers lowercases on the way in, and that is what reaches the wire: the
 // property the serve tests' spellings depend on.
 TEST(Response, FieldNamesReachTheWireLowercased) {
     Response response;

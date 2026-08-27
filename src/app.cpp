@@ -38,8 +38,7 @@ void App::del(std::string_view path, http::Handler handler) {
 }
 
 bool App::route(http::Method method, std::string_view path, http::Handler handler) {
-    // No default: a method added to the enum has to be classified here rather
-    // than fall through to registrable.
+    // No default: a new method has to be classified, not fall through to registrable.
     switch (method) {
         case http::Method::Head:
         case http::Method::Connect:
@@ -59,8 +58,8 @@ bool App::route(http::Method method, std::string_view path, http::Handler handle
 }
 
 bool App::run(std::uint16_t port) {
-    // The optional is tested rather than the result: both say the same thing here,
-    // but only this spelling proves to the analyser that the deref below is safe.
+    // The optional, not the result: both say the same thing, but only this spelling
+    // proves to the analyser that the deref below is safe.
     net::ListenResult listen_result = net::listen_on(port);
     if (!listen_result.listener.has_value()) {
         return false;
@@ -71,17 +70,16 @@ bool App::run(std::uint16_t port) {
     while (true) {
         auto accepted = listener.accept();
         if (!accepted.client.has_value()) {
-            // A connection dying in the queue before it is taken is routine and must
-            // not stop the server. Anything else means the listener itself is
-            // finished, and retrying would spin hot on the same error.
+            // A connection dying in the queue is routine. Anything else means the
+            // listener is finished, and retrying would spin hot on the same error.
             if (accepted.os_error == ECONNABORTED) {
                 continue;
             }
             return false;
         }
 
-        // Served to completion before the next accept, and closed when conn leaves
-        // scope. One client at a time until the concurrency milestone.
+        // To completion before the next accept, closed when conn leaves scope: one
+        // client at a time until the concurrency milestone.
         server::Connection conn{std::move(*accepted.client)};
         server::serve_connection(conn, *router_);
     }
