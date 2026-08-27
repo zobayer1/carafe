@@ -30,6 +30,7 @@ set(CARAFE_TEST_HEADERS
 )
 
 set(CARAFE_TEST_SOURCES
+    app_test.cpp
     http/headers_test.cpp
     http/line_reader_test.cpp
     http/request_test.cpp

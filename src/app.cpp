@@ -21,6 +21,43 @@ void App::get(std::string_view path, http::Handler handler) {
     router_->add(http::Method::Get, path, std::move(handler));
 }
 
+void App::post(std::string_view path, http::Handler handler) {
+    router_->add(http::Method::Post, path, std::move(handler));
+}
+
+void App::put(std::string_view path, http::Handler handler) {
+    router_->add(http::Method::Put, path, std::move(handler));
+}
+
+void App::patch(std::string_view path, http::Handler handler) {
+    router_->add(http::Method::Patch, path, std::move(handler));
+}
+
+void App::del(std::string_view path, http::Handler handler) {
+    router_->add(http::Method::Delete, path, std::move(handler));
+}
+
+bool App::route(http::Method method, std::string_view path, http::Handler handler) {
+    // No default: a method added to the enum has to be classified here rather
+    // than fall through to registrable.
+    switch (method) {
+        case http::Method::Head:
+        case http::Method::Connect:
+            return false;
+        case http::Method::Get:
+        case http::Method::Post:
+        case http::Method::Put:
+        case http::Method::Patch:
+        case http::Method::Delete:
+        case http::Method::Options:
+        case http::Method::Trace:
+            break;
+    }
+
+    router_->add(method, path, std::move(handler));
+    return true;
+}
+
 bool App::run(std::uint16_t port) {
     // The optional is tested rather than the result: both say the same thing here,
     // but only this spelling proves to the analyser that the deref below is safe.

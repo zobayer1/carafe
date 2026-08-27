@@ -1,6 +1,7 @@
 #pragma once
 
 #include <carafe/http/handler.hpp>
+#include <carafe/http/request.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -27,8 +28,20 @@ public:
     App& operator=(App&&) = delete;
 
     // A path answers only the method it was registered for, and only the first
-    // handler given for it.
+    // handler given for it. HEAD falls back to the GET registered for the path.
     void get(std::string_view path, http::Handler handler);
+    void post(std::string_view path, http::Handler handler);
+    void put(std::string_view path, http::Handler handler);
+    void patch(std::string_view path, http::Handler handler);
+
+    // Spelt short because `delete` is a keyword.
+    void del(std::string_view path, http::Handler handler);
+
+    // The methods without a named helper. Head and Connect are refused with
+    // false: HEAD is answered by the Get fallback, whose headers a hand-written
+    // route would have to reproduce, and a CONNECT target is an authority rather
+    // than a path, so such a route could never match anything.
+    [[nodiscard]] bool route(http::Method method, std::string_view path, http::Handler handler);
 
     // Serves requests on `port`. Returns only on failure -- false if the port
     // could not be bound, or if accepting stopped for a reason retrying would

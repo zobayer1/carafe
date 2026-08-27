@@ -11,26 +11,29 @@ requests, responses, and not much else.
 This is a learning project, built from the socket up rather than on top of an
 existing HTTP library. It is not production software.
 
-**Status:** it routes. `make run` starts a server with three registered routes,
-one of them bound to a path parameter; anything else gets a 404, and a known path
-under the wrong method a 405 naming the methods that would have worked.
-Malformed heads still get their proper statuses — 400, 413, 414, 431, 501, 505 —
-and a request refused for its size is answered without ending the connection.
-Connections are kept alive and handled one at a time. A parameter binds a single
-path segment, and a body declared by `Content-Length` reaches the handler whole.
+**Status:** it routes. Static paths and single-segment path parameters, matched
+by method, with a 404 for an unregistered path and a 405 naming the methods that
+would have worked. Malformed heads get their proper statuses — 400, 413, 414,
+431, 501, 505 — and a request refused for its size is answered without ending the
+connection. A body declared by `Content-Length` reaches the handler whole.
+Connections are kept alive and handled one at a time.
 
 ```cpp
 carafe::App app;
-app.get("/hello", [](const carafe::http::Request&) {
-    return carafe::http::text_response(200, "hello\n");
-});
 app.get("/hello/<name>", [](const carafe::http::Request& request) {
     std::string body = "hello, ";
     body += request.params.get("name").value_or("world");
     return carafe::http::text_response(200, body + "!\n");
 });
+app.post("/echo", [](const carafe::http::Request& request) {
+    return carafe::http::text_response(200, request.body);
+});
 app.run(8080);
 ```
+
+`make run` serves the whole example on port 8080. See
+[docs/examples.md](docs/examples.md) for every route it registers, and for what
+each kind of body does to the connection.
 
 ## Goals
 
