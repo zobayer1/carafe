@@ -265,4 +265,70 @@ TEST(LineReader, TakesMoreThanTheLineLengthCap) {
     EXPECT_EQ(take(reader, body.size()), body);
 }
 
+TEST(LineReader, DiscardsExactlyTheRequestedBytes) {
+    LineReader reader;
+    reader.append("abcdef");
+    EXPECT_EQ(reader.discard(3), 3U);
+    EXPECT_EQ(take(reader, 3), "def");
+}
+
+// Fewer than asked is the ordinary answer rather than a failure: the rest of the
+// body has not arrived yet.
+TEST(LineReader, DiscardsOnlyWhatHasArrived) {
+    LineReader reader;
+    reader.append("ab");
+    EXPECT_EQ(reader.discard(5), 2U);
+}
+
+TEST(LineReader, DiscardsNothingFromAnEmptyBuffer) {
+    LineReader reader;
+    EXPECT_EQ(reader.discard(5), 0U);
+}
+
+TEST(LineReader, DiscardsNothingWhenAskedForNothing) {
+    LineReader reader;
+    reader.append("abc");
+    EXPECT_EQ(reader.discard(0), 0U);
+    EXPECT_EQ(take(reader, 3), "abc");
+}
+
+// A refused body arrives in pieces, and the countdown runs across them.
+TEST(LineReader, AccumulatesDiscardsAcrossAppends) {
+    LineReader reader;
+    std::size_t remaining = 10;
+    for (const std::string_view chunk : {"abcd", "efgh", "ijkl"}) {
+        reader.append(chunk);
+        remaining -= reader.discard(remaining);
+    }
+    EXPECT_EQ(remaining, 0U);
+    EXPECT_EQ(take(reader, 2), "kl");
+}
+
+// Discarded bytes were never scanned, so a scan position left behind them finds
+// a terminator inside them.
+TEST(LineReader, LineScanningResumesAfterDiscardedBytes) {
+    LineReader reader;
+    reader.append("A\r\nB\r\n");
+    EXPECT_EQ(reader.discard(3), 3U);
+    EXPECT_EQ(drain(reader), (Lines{"B"}));
+}
+
+// Compaction shifts the scan position back by the consumed prefix, which
+// underflows if a discard left it behind.
+TEST(LineReader, SurvivesCompactionAfterADiscard) {
+    LineReader reader;
+    reader.append("abcd");
+    EXPECT_EQ(reader.discard(2), 2U);
+    reader.append("e\r\n");
+    EXPECT_EQ(drain(reader), (Lines{"cde"}));
+}
+
+// The whole point of dropping a body: what follows it is the next request.
+TEST(LineReader, LeavesTheNextRequestLineIntact) {
+    LineReader reader;
+    reader.append("bodybytesGET / HTTP/1.1\r\n");
+    EXPECT_EQ(reader.discard(9), 9U);
+    EXPECT_EQ(drain(reader), (Lines{"GET / HTTP/1.1"}));
+}
+
 }  // namespace

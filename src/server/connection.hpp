@@ -20,6 +20,10 @@ struct ConnectionResult {
     int os_error = 0;
     std::optional<http::Request> request;
 
+    // From the reader: false when the byte stream cannot be resynchronised, so the
+    // caller answers this failure and closes rather than looking for another request.
+    bool stream_continues = true;
+
     [[nodiscard]] explicit operator bool() const noexcept {
         return error == http::RequestError::None && os_error == 0;
     }

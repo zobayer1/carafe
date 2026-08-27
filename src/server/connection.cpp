@@ -15,16 +15,16 @@ ConnectionResult Connection::next_request() {
         // this request, and a pipelining client will not send more until it is
         // answered. Reading first would wait for bytes that have already arrived.
         auto parsed = reader_.next_request();
-        if (!parsed) {
-            return {parsed.error, 0, std::nullopt};
-        }
-        if (parsed.request) {
-            return {http::RequestError::None, 0, std::move(parsed.request)};
+
+        // Anything but "nothing yet": a failure carries no request, a success
+        // carries one, and both carry whatever the reader said about the stream.
+        if (!parsed || parsed.request) {
+            return {parsed.error, 0, std::move(parsed.request), parsed.stream_continues};
         }
 
         const auto chunk = socket_.read(buffer_.data(), buffer_.size());
         if (!chunk) {
-            return {http::RequestError::None, chunk.os_error, std::nullopt};
+            return {http::RequestError::None, chunk.os_error, std::nullopt, false};
         }
 
         // A close part-way through a head is reported as a finished connection

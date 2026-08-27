@@ -22,6 +22,7 @@ constexpr std::size_t max_head_bytes = 65536;
 constexpr std::size_t max_header_fields = 100;
 constexpr std::size_t max_line_length = 8192;
 constexpr std::size_t max_body_bytes = 1048576;
+constexpr std::size_t max_drain_bytes = 8388608;
 
 // One append, one answer.
 RequestResult read(RequestReader& reader, std::string_view bytes) {
@@ -50,12 +51,24 @@ std::string post_body(std::string_view body) {
 }
 
 // A POST whose Content-Length carries `value`, with no body following.
-RequestError content_length_error(std::string_view value) {
+RequestResult content_length_result(std::string_view value) {
     RequestReader reader;
     std::string bytes = "POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: ";
     bytes += value;
     bytes += "\r\n\r\n";
-    return read(reader, bytes).error;
+    return read(reader, bytes);
+}
+
+// Feeds `length` body bytes in socket-sized pieces, checking the reader stays
+// mid-drain the whole way: no request, and no failure.
+void feed_body(RequestReader& reader, std::size_t length) {
+    constexpr std::size_t chunk = 4096;
+    for (std::size_t sent = 0; sent < length; sent += chunk) {
+        reader.append(std::string(sent + chunk > length ? length - sent : chunk, 'b'));
+        const auto pending = reader.next_request();
+        EXPECT_TRUE(pending) << "unexpected error: " << pending.error;
+        EXPECT_FALSE(pending.request.has_value());
+    }
 }
 
 // `count` field lines, each value `value_size` bytes, with distinct names.
@@ -314,6 +327,7 @@ TEST(RequestReader, FailureIsTerminal) {
     const auto after = read(reader, "GET / HTTP/1.1\r\nHost: x\r\n\r\n");
     EXPECT_EQ(after.error, RequestError::Malformed);
     EXPECT_FALSE(after.request.has_value());
+    EXPECT_FALSE(after.stream_continues);
 }
 
 TEST(RequestReader, ReadsABodyOfTheDeclaredLength) {
@@ -422,30 +436,37 @@ TEST(RequestReader, AcceptsABodyAtExactlyTheCap) {
 }
 
 // Refused on the declaration alone, so the bytes are never buffered to find out.
+// The length is known, so the reader can still read past them.
 TEST(RequestReader, RejectsAContentLengthOverTheCap) {
-    EXPECT_EQ(content_length_error(std::to_string(max_body_bytes + 1)), RequestError::BodyTooLarge);
+    const auto result = content_length_result(std::to_string(max_body_bytes + 1));
+    EXPECT_EQ(result.error, RequestError::BodyTooLarge);
+    EXPECT_TRUE(result.stream_continues);
 }
 
 // Bounded before the multiply overflows, so it cannot wrap into a small length.
+// Nothing usable came back, so there is no length to drain and no way to resume.
 TEST(RequestReader, RejectsAContentLengthTooLargeToHold) {
-    EXPECT_EQ(content_length_error("99999999999999999999"), RequestError::BodyTooLarge);
+    const auto result = content_length_result("99999999999999999999");
+    EXPECT_EQ(result.error, RequestError::BodyTooLarge);
+    EXPECT_FALSE(result.stream_continues);
 }
 
 TEST(RequestReader, RejectsANonDigitContentLength) {
     for (const std::string_view value : {"abc", "3a", "a3", "+3", "-3", "3.0", "0x3", "3 3"}) {
-        EXPECT_EQ(content_length_error(value), RequestError::Malformed) << "value: " << value;
+        EXPECT_EQ(content_length_result(value).error, RequestError::Malformed)
+            << "value: " << value;
     }
 }
 
 // The comma spelling of a repeated field: rejected by the digit rule, not by
 // counting, because it arrives as one field.
 TEST(RequestReader, RejectsACommaSeparatedContentLength) {
-    EXPECT_EQ(content_length_error("3, 3"), RequestError::Malformed);
+    EXPECT_EQ(content_length_result("3, 3").error, RequestError::Malformed);
 }
 
 // A present field with no value is a syntax error, unlike an absent one.
 TEST(RequestReader, RejectsAnEmptyContentLength) {
-    EXPECT_EQ(content_length_error(""), RequestError::Malformed);
+    EXPECT_EQ(content_length_result("").error, RequestError::Malformed);
 }
 
 // Refused even though the two agree: only one framing directive may be believed.
@@ -476,6 +497,64 @@ TEST(RequestReader, RejectsTransferEncodingAheadOfContentLength) {
              "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nContent-Length: 3\r\n"
              "\r\nabc");
     EXPECT_EQ(result.error, RequestError::UnsupportedTransferEncoding);
+}
+
+// Past the drain ceiling the length is known and refused anyway: reading that
+// much only to throw it away costs more than the connection is worth.
+TEST(RequestReader, EndsTheStreamOnABodyTooLargeToDrain) {
+    const auto result = content_length_result(std::to_string(max_drain_bytes + 1));
+    EXPECT_EQ(result.error, RequestError::BodyTooLarge);
+    EXPECT_FALSE(result.stream_continues);
+}
+
+// The refused body is dropped and what follows it is an ordinary request, with
+// none of the refused head's fields carried into it.
+TEST(RequestReader, DrainsARefusedBodyAndReadsTheNext) {
+    RequestReader reader;
+    reader.append(post_body(std::string(max_body_bytes + 1, 'b')) +
+                  "GET /b HTTP/1.1\r\nHost: y\r\n\r\n");
+
+    const auto refused = reader.next_request();
+    EXPECT_EQ(refused.error, RequestError::BodyTooLarge);
+    EXPECT_TRUE(refused.stream_continues);
+
+    const auto next = reader.next_request();
+    ASSERT_TRUE(next.request.has_value()) << "unexpected error: " << next.error;
+    EXPECT_EQ(next.request->target, "/b");
+    EXPECT_EQ(next.request->headers.size(), 1U);
+    EXPECT_EQ(next.request->headers.get("host"), "y");
+    EXPECT_TRUE(next.request->body.empty());
+}
+
+// A megabyte does not arrive at once, so the countdown has to span reads.
+TEST(RequestReader, DrainsARefusedBodyAcrossAppends) {
+    constexpr std::size_t length = max_body_bytes + 1;
+
+    RequestReader reader;
+    reader.append("POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: " + std::to_string(length) +
+                  "\r\n\r\n");
+    EXPECT_EQ(reader.next_request().error, RequestError::BodyTooLarge);
+
+    feed_body(reader, length);
+
+    reader.append("GET /b HTTP/1.1\r\nHost: y\r\n\r\n");
+    const auto next = reader.next_request();
+    ASSERT_TRUE(next.request.has_value()) << "unexpected error: " << next.error;
+    EXPECT_EQ(next.request->target, "/b");
+}
+
+// Everything else leaves the reader with no idea where the next request starts.
+TEST(RequestReader, EndsTheStreamOnAFailureItCannotReadPast) {
+    for (const std::string_view head :
+         {"NOTAREQUEST\r\n\r\n", "GET / HTTP/1.1\r\nHost: x\r\nbad header\r\n\r\n",
+          "GET / HTTP/2.0\r\nHost: x\r\n\r\n", "FROB / HTTP/1.1\r\nHost: x\r\n\r\n",
+          "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n",
+          "POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: abc\r\n\r\n"}) {
+        RequestReader reader;
+        const auto result = read(reader, head);
+        EXPECT_FALSE(result) << "expected a failure for: " << head;
+        EXPECT_FALSE(result.stream_continues) << "head: " << head;
+    }
 }
 
 }  // namespace

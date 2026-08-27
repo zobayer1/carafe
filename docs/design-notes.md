@@ -873,3 +873,49 @@ coding on the far side of a line from an unimplemented method. Both answer 501,
 but a method we do not serve arrives on a request we can measure and step over,
 while a coding we cannot decode leaves us with no idea where the body ends. Same
 status, opposite consequence for the connection.
+
+## Refusing a request is not the same as losing the stream
+
+Every rejected head used to be answered with `connection: close`, on the
+reasoning that after a bad head the byte stream cannot be resynchronised. That
+is true of most rejections and false of the one that matters. A body over the
+size limit is refused on its declared `Content-Length` alone, before a single
+byte of it is buffered — which means the length is *known*, and a reader that
+knows the length knows exactly where the next request begins. Closing there
+punishes a client for the one mistake we can recover from perfectly.
+
+So `RequestResult` carries a `stream_continues` flag and `RequestReader` grew a
+second way to fail. `fail` latches, so every later call repeats the failure;
+`refuse` does not latch, arms a discard phase, and lets the reader step over the
+body it declined. Not latching is the whole mechanism — there is no other switch.
+
+The flag lives on the result rather than being computed from `RequestError`,
+and the reason is visible at the two call sites that produce `BodyTooLarge`. One
+comes from `measure_body`, where the declared length passed the drain ceiling or
+was too large to hold at all; there is no number to count down, so the stream is
+gone. The other comes from the cap comparison in `complete_head`, where the
+length is known and modest; that one recovers. Same enumerator, opposite answers,
+so no exhaustive `switch` over the enum could have expressed it. Recoverability
+is a property of what the reader knows when it fails, not of the value it
+reports — which is the same argument that keeps the 414-or-431 decision inside
+`RequestReader` rather than in `LineReader`.
+
+## Politeness has a ceiling
+
+Draining is real work: skipping a declared body means reading and throwing away
+every byte of it. `Content-Length: 999999999999` would have us do that
+indefinitely to be courteous to a client that is not being courteous back. So
+there is a second cap above the body limit, and past it a refusal closes after
+all.
+
+That ceiling is where `parse_content_length` stops counting, not the body limit,
+and the difference is load-bearing. Bounding at the body limit would discard the
+number for every length in between — exactly the lengths that are drainable —
+and the drain would have nothing to count down. So the parser bounds at the
+ceiling and returns a usable value; `complete_head` compares that value against
+the body limit and decides. Grammar and absurdity in the parser, policy in the
+reader.
+
+The value itself is the one genuinely arbitrary constant here. Eight megabytes
+buys back the connection for an upload a little over the limit and refuses to
+spend the afternoon on one that is wildly over it. Nothing derives it.

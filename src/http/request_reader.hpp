@@ -29,6 +29,10 @@ struct RequestResult {
     RequestError error = RequestError::None;
     std::optional<Request> request;
 
+    // False when the reader cannot find where the next request begins, which is
+    // every failure but a body it is willing to read and drop.
+    bool stream_continues = true;
+
     [[nodiscard]] explicit operator bool() const noexcept {
         return error == RequestError::None;
     }
@@ -45,13 +49,20 @@ public:
     [[nodiscard]] RequestResult next_request();
 
 private:
-    enum class Phase { RequestLine, Headers, Body };
+    enum class Phase { RequestLine, Headers, Body, Discard };
 
-    // Records the failure so it survives to every later call, then reports it.
+    // Loses the stream: the failure latches and every later call repeats it.
     [[nodiscard]] RequestResult fail(RequestError error);
 
-    // Hands the assembled request over and arms the next one. Only success resets: after
-    // a failure the stream position is unknown, so there is nothing safe to resume from.
+    // Answerable and read past: the failure is reported once, the declared body is
+    // dropped, and the next request is parsed as usual.
+    [[nodiscard]] RequestResult refuse(RequestError error);
+
+    // Clears the per-request state, and so is called wherever the next request's
+    // first byte is known: a completed request, or a refused body fully drained.
+    void arm_next_request();
+
+    // Hands the assembled request over and arms the next one.
     [[nodiscard]] RequestResult finish_request();
 
     // Engaged means "hand this to the caller"; empty means "read another line".

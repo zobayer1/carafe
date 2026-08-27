@@ -14,7 +14,8 @@ existing HTTP library. It is not production software.
 **Status:** it routes. `make run` starts a server with three registered routes,
 one of them bound to a path parameter; anything else gets a 404, and a known path
 under the wrong method a 405 naming the methods that would have worked.
-Malformed heads still get their proper statuses — 400, 413, 414, 431, 501, 505.
+Malformed heads still get their proper statuses — 400, 413, 414, 431, 501, 505 —
+and a request refused for its size is answered without ending the connection.
 Connections are kept alive and handled one at a time. A parameter binds a single
 path segment, and a body declared by `Content-Length` reaches the handler whole.
 
@@ -134,7 +135,7 @@ make PRESET=release test
 - [x] Header field parsing: token names, OWS, obs-fold and CTL rejection
 - [x] Header block assembly: duplicates, Host, total-head limit
 - [x] Request body via Content-Length
-- [ ] Draining a refused body so the connection outlives the refusal
+- [x] Draining a refused body so the connection outlives the refusal
 - [x] Response building and serialization
 - [x] Routing: static paths matched by method, with 404 and 405 + `Allow`
 - [x] Handler registration API

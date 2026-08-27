@@ -1,5 +1,6 @@
 #include "http/line_reader.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -72,6 +73,13 @@ std::optional<std::string_view> LineReader::take(std::size_t n) {
     scanned_ = begin_;
 
     return bytes;
+}
+
+std::size_t LineReader::discard(std::size_t n) noexcept {
+    const std::size_t dropped = std::min(n, buffer_.size() - begin_);
+    begin_ += dropped;
+    scanned_ = begin_;
+    return dropped;
 }
 
 }  // namespace carafe::http

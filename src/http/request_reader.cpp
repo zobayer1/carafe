@@ -27,9 +27,13 @@ constexpr std::size_t crlf_size = 2;
 // No streaming yet, so a body is held whole in memory before a handler sees it.
 constexpr std::size_t max_body_bytes = 1048576;
 
+// Past this, reading a refused body and throwing it away costs more than the
+// connection is worth, so the refusal closes instead.
+constexpr std::size_t max_drain_bytes = 8388608;
+
 // What lets the digit loop carry one bound instead of two: the cap is tested
 // after each digit, so the next multiply starts below it and cannot wrap.
-static_assert(max_body_bytes <= (std::numeric_limits<std::size_t>::max() - 9) / 10);
+static_assert(max_drain_bytes <= (std::numeric_limits<std::size_t>::max() - 9) / 10);
 
 namespace {
 
@@ -53,7 +57,7 @@ struct BodyLength {
             return {RequestError::Malformed, 0};
         }
         bytes = (bytes * 10) + (digit - '0');
-        if (bytes > max_body_bytes) {
+        if (bytes > max_drain_bytes) {
             return {RequestError::BodyTooLarge, 0};
         }
     }
@@ -86,21 +90,30 @@ struct BodyLength {
 
 }  // namespace
 
-RequestResult RequestReader::finish_request() {
-    Request ready = std::move(request_);
-
+void RequestReader::arm_next_request() {
     phase_ = Phase::RequestLine;
     request_ = Request{};
     head_bytes_ = 0;
     body_bytes_ = 0;
     field_count_ = 0;
+}
+
+RequestResult RequestReader::finish_request() {
+    Request ready = std::move(request_);
+
+    arm_next_request();
 
     return {RequestError::None, std::move(ready)};
 }
 
 RequestResult RequestReader::fail(RequestError error) {
     failure_ = error;
-    return {error, std::nullopt};
+    return {error, std::nullopt, false};
+}
+
+RequestResult RequestReader::refuse(RequestError error) {
+    phase_ = Phase::Discard;
+    return {error, std::nullopt, true};
 }
 
 void RequestReader::append(std::string_view bytes) {
@@ -165,6 +178,12 @@ std::optional<RequestResult> RequestReader::complete_head() {
     }
     body_bytes_ = body.bytes;
 
+    // Over the limit but inside the drain ceiling, so the length is known and
+    // small enough to read and throw away.
+    if (body_bytes_ > max_body_bytes) {
+        return refuse(RequestError::BodyTooLarge);
+    }
+
     // Nothing to wait for, so the request is complete at the blank line.
     if (body_bytes_ == 0) {
         return finish_request();
@@ -176,10 +195,19 @@ std::optional<RequestResult> RequestReader::complete_head() {
 
 RequestResult RequestReader::next_request() {
     if (failure_ != RequestError::None) {
-        return {failure_, std::nullopt};
+        return fail(failure_);
     }
 
     while (true) {
+        if (phase_ == Phase::Discard) {
+            body_bytes_ -= line_reader_.discard(body_bytes_);
+            if (body_bytes_ > 0) {
+                return {};
+            }
+            arm_next_request();
+            continue;
+        }
+
         if (phase_ == Phase::Body) {
             const auto body = line_reader_.take(body_bytes_);
             if (!body.has_value()) {

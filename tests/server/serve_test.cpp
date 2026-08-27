@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 
 #include <gtest/gtest.h>
@@ -70,9 +71,12 @@ std::pair<Socket, Socket> connected_pair() {
     return {Socket{fds[0]}, Socket{fds[1]}};
 }
 
+// MSG_NOSIGNAL for the same reason Socket::write uses it: a server that closes
+// early leaves this writing to a dead socket, and SIGPIPE would kill the run
+// rather than fail the test.
 void send_all(const Socket& sock, std::string_view bytes) {
     while (!bytes.empty()) {
-        const ssize_t sent = ::send(sock.get(), bytes.data(), bytes.size(), 0);
+        const ssize_t sent = ::send(sock.get(), bytes.data(), bytes.size(), MSG_NOSIGNAL);
         ASSERT_NE(sent, -1);
         bytes.remove_prefix(static_cast<std::size_t>(sent));
     }
@@ -478,11 +482,63 @@ TEST(ServeConnection, AnswersARequestPipelinedBehindABody) {
     EXPECT_EQ(response.find("501"), std::string::npos);
 }
 
-// Refused on the declared length, so no body bytes need arrive at all.
-TEST(ServeConnection, AnswersAnOversizedBodyWithFourThirteen) {
+// Refused on the declared length, so no body byte is ever buffered. The length
+// is known, so the connection outlives the refusal and says nothing about
+// closing. No body is sent: send_all runs before the server does, and a megabyte
+// would fill the socket buffer with nobody draining it. The drain itself is
+// exercised in RequestReader.DrainsARefusedBodyAndReadsTheNext.
+TEST(ServeConnection, AnswersAnOversizedBodyWithoutClosing) {
     auto pair = connected_pair();
     send_all(pair.first,
              "POST /submit HTTP/1.1\r\nHost: example.test\r\nContent-Length: 1048577\r\n\r\n");
+
+    const std::string response = serve_and_read(pair, Router{});
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 413 Content Too Large");
+    EXPECT_EQ(response.find("connection: close\r\n"), std::string::npos);
+}
+
+// What the refusal buys, and the only place it is visible: the request behind a
+// dropped body is served normally. The body outgrows any socket buffer, so it
+// cannot be queued before the server runs -- a writer feeds it while the server
+// drains, which is what a real client does anyway.
+TEST(ServeConnection, ServesTheRequestBehindARefusedBody) {
+    auto pair = connected_pair();
+    const std::string bytes =
+        "POST /submit HTTP/1.1\r\nHost: example.test\r\nContent-Length: 1048577\r\n\r\n" +
+        std::string(1048577, 'b') + std::string{get_root};
+
+    std::thread writer([&pair, &bytes] {
+        send_all(pair.first, bytes);
+        EXPECT_EQ(::shutdown(pair.first.get(), SHUT_WR), 0);
+    });
+
+    {
+        Connection conn{std::move(pair.second)};
+        serve_connection(conn, routing("/"));
+    }
+    writer.join();
+
+    std::string response;
+    std::array<char, 4096> buf{};
+    while (true) {
+        const ssize_t got = ::recv(pair.first.get(), buf.data(), buf.size(), 0);
+        if (got <= 0) {
+            break;
+        }
+        response.append(buf.data(), static_cast<std::size_t>(got));
+    }
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 413 Content Too Large");
+    EXPECT_NE(response.find("HTTP/1.1 200 OK"), std::string::npos);
+    EXPECT_NE(response.find("you asked for /"), std::string::npos);
+}
+
+// Past the drain ceiling there is nothing worth reading past, so this one closes.
+TEST(ServeConnection, AnswersAnUndrainableBodyWithFourThirteenAndCloses) {
+    auto pair = connected_pair();
+    send_all(pair.first,
+             "POST /submit HTTP/1.1\r\nHost: example.test\r\nContent-Length: 8388609\r\n\r\n");
 
     const std::string response = serve_and_read(pair, Router{});
 

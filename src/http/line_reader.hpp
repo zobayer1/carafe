@@ -25,7 +25,8 @@ struct LineResult {
     }
 };
 
-// Splits a byte stream into CRLF-terminated lines across chunk boundaries.
+// A buffer over a byte stream, reassembled across chunk boundaries: it yields
+// CRLF-terminated lines, hands over a byte count, or drops one.
 class LineReader {
 public:
     // Invalidates every view handed out by next_line() and take(): the buffer
@@ -42,6 +43,11 @@ public:
     // before the first byte is taken, so an oversized one is refused by the
     // caller rather than discovered halfway through.
     [[nodiscard]] std::optional<std::string_view> take(std::size_t n);
+
+    // Drops up to `n` buffered bytes and reports how many it dropped, which is
+    // fewer than asked whenever the rest has not arrived. Not take(): waiting for a
+    // whole body before dropping it would buffer exactly the bytes we refused.
+    [[nodiscard]] std::size_t discard(std::size_t n) noexcept;
 
 private:
     std::string buffer_;

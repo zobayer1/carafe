@@ -52,11 +52,13 @@ http::Response status_response(int status) {
     return http::text_response(status, std::move(body));
 }
 
-// connection: close, because the byte stream cannot be resynchronised after a
-// bad head. A 404 gets no such header -- that connection is perfectly healthy.
-http::Response parse_error_response(http::RequestError error) {
+// connection: close only when the stream cannot be resynchronised. A refusal the
+// reader can read past leaves the connection as healthy as a 404 does.
+http::Response parse_error_response(http::RequestError error, const bool stream_continues) {
     http::Response response = status_response(status_for(error));
-    response.headers.add({"connection", "close"});
+    if (!stream_continues) {
+        response.headers.add({"connection", "close"});
+    }
     return response;
 }
 
@@ -92,13 +94,23 @@ void serve_connection(Connection& conn, const Router& router) {
         auto result = conn.next_request();
 
         if (!result) {
-            // Answerable or not, the connection ends here: the byte stream cannot
-            // be resynchronised after a bad head, and RequestReader latches the
-            // failure. A read failure gets no reply because nobody is listening.
-            if (result.os_error == 0) {
-                static_cast<void>(conn.write(parse_error_response(result.error).serialize()));
+            // A read failure gets no reply because nobody is listening.
+            if (result.os_error != 0) {
+                return;
             }
-            return;
+
+            const http::Response response =
+                parse_error_response(result.error, result.stream_continues);
+            if (!conn.write(response.serialize())) {
+                return;  // nobody left to answer
+            }
+
+            // Only the reader knows whether it can find the next request line, and
+            // the reply just sent told the client which answer it gave.
+            if (!result.stream_continues) {
+                return;
+            }
+            continue;
         }
 
         if (!result.request) {
