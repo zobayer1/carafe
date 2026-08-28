@@ -1,8 +1,9 @@
 // The smallest thing that proves the socket, the parser, the router and the responder are joined up, plus enough routes
 // to drive a body through by hand. docs/examples.md walks through what each one answers.
 //
-// Connections are served one at a time, to completion, and a persistent one is held until the client hangs up, so a
-// browser holding one open locks everyone else out. That is what the concurrency milestone is for.
+// Each connection is served on its own thread, so a browser holding a persistent one open no longer keeps anyone else
+// waiting. Nothing bounds how many: a client that connects and stays silent holds a thread until it hangs up, which is
+// what the pool and idle-timeout milestone is for.
 
 #include <carafe/app.hpp>
 #include <carafe/http/request.hpp>

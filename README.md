@@ -146,7 +146,8 @@ make PRESET=release test
 - [x] Routing: percent-decoded captures
 - [ ] Routing: typed and multi-segment parameters
 - [ ] Routing: normalising a pattern and a request path against each other
-- [ ] Concurrency: thread-per-connection, then a thread pool
+- [x] Concurrency: a thread per connection, detached
+- [ ] Concurrency: a thread pool, and an idle timeout to bound what it holds
 - [ ] Middleware
 - [x] Keep-alive: the `Connection` field and the version's own default
 - [x] Chunked transfer encoding: chunk framing, extensions, and a dropped trailer section

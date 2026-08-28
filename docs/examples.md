@@ -261,9 +261,30 @@ run("2MB body    ", 2000000, 2000000)
 run("9MB declared", 9000000, 0, follow=False)
 ```
 
-## Serving one at a time
+## Serving more than one client
 
-The example serves each connection to completion before accepting the next, so a
-client holding a keep-alive connection open locks everyone else out. That is a
-known gap rather than a surprise — see the concurrency milestone in the
-[roadmap](../README.md#roadmap).
+Each connection gets its own thread, so a client holding a persistent connection
+open no longer keeps anyone else waiting:
+
+```python
+import socket, subprocess
+
+# One client asks, is answered, and simply holds on.
+idle = socket.create_connection(("localhost", 8080))
+idle.sendall(b"GET /hello HTTP/1.1\r\nHost: x\r\n\r\n")
+print(idle.recv(200).split(b"\r\n")[0].decode())
+
+# A second client, while the first is still connected.
+print(subprocess.run(["curl", "-s", "-m", "3", "-o", "/dev/null", "-w", "%{http_code}",
+                      "http://localhost:8080/hello"], capture_output=True, text=True).stdout)
+```
+
+Both answer `200`. Served one at a time, the second would have waited for as long
+as the first cared to hold on, which is not long enough for a browser to be the
+first.
+
+What is not bounded is how many threads there are. A client that connects and
+sends nothing holds one until it hangs up, and nothing times it out, so the limit
+is the process descriptor limit rather than anything this server decides. That is
+a smaller problem than the one it replaces, and it is what the pool and
+idle-timeout milestone in the [roadmap](../README.md#roadmap) is for.

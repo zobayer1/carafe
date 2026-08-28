@@ -13,9 +13,7 @@
 
 namespace carafe {
 
-App::App() : router_(std::make_unique<server::Router>()) {}
-
-App::~App() = default;
+App::App() : router_(std::make_shared<server::Router>()) {}
 
 void App::get(std::string_view path, http::Handler handler) {
     router_->add(http::Method::Get, path, std::move(handler));
@@ -67,22 +65,9 @@ bool App::run(std::uint16_t port) {
 
     net::Listener& listener = *listen_result.listener;
 
-    while (true) {
-        auto accepted = listener.accept();
-        if (!accepted.client.has_value()) {
-            // A connection dying in the queue is routine. Anything else means the listener is finished, and retrying
-            // would spin hot on the same error.
-            if (accepted.os_error == ECONNABORTED) {
-                continue;
-            }
-            return false;
-        }
+    server::serve_forever(listener, router_);
 
-        // To completion before the next accept, closed when conn leaves scope: one client at a time until the
-        // concurrency milestone.
-        server::Connection conn{std::move(*accepted.client)};
-        server::serve_connection(conn, *router_);
-    }
+    return false;
 }
 
 }  // namespace carafe

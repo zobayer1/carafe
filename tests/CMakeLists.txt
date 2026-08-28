@@ -41,6 +41,7 @@ set(CARAFE_TEST_SOURCES
     net/socket_test.cpp
     server/connection_test.cpp
     server/router_test.cpp
+    server/serve_forever_test.cpp
     server/serve_test.cpp
     version_test.cpp
 )

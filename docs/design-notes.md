@@ -1045,3 +1045,59 @@ ceiling reapplied per chunk. And framing overhead is bounded only indirectly.
 Every chunk carries at least one byte, so a 1 MiB cap admits at most a million
 chunks, but a client sending them one byte at a time makes us read about six
 megabytes to get there. Bounded, not tight.
+
+## One slow client was every client
+
+Serving each connection to completion before accepting the next is the simplest
+thing that works, and it worked for as long as connections were short. Keep-alive
+ended that. A client that asks once and then holds its connection open is doing
+exactly what HTTP/1.1 tells it to do, and it took the whole server with it: a
+second client got nothing at all, indefinitely, and a third queued behind that.
+No malice and no request were required. Holding the socket was enough.
+
+So each accepted connection now gets a thread, and the thread is detached. Not
+joined, because there is nothing to join it to: the accept loop returns only when
+accepting itself fails, and a loop that paused to reap finished threads would be
+choosing between doing that and accepting.
+
+Detaching creates the problem worth writing down. A detached thread can outlive
+the call that spawned it, and `run()` does return, on any accept failure that
+retrying would not fix. If the `App` is destroyed at that point, every thread
+still serving is holding a reference to a `Router` that no longer exists. The
+answer is not to document the hazard but to remove it: `router_` became a
+`shared_ptr`, and each thread captures its own copy, so the routing table lives
+until the last connection using it is finished. Nothing has to be sequenced and
+nothing has to be remembered.
+
+The copy each thread holds is a `shared_ptr<const Router>`, and the `const` is
+load-bearing rather than decorative. Threads read; registration writes. That was
+always the intended usage, and `run()` already asked for it in a comment, but
+until now registering a route mid-flight was merely surprising. With connections
+overlapping it is a data race on a `vector` that live threads are walking, which
+is a different class of wrong.
+
+Spawning a thread can fail, and `std::thread`'s constructor reports that by
+throwing. Left alone it would terminate the process, which is the one outcome
+worse than the problem being solved: every connection already in flight dies with
+it. So the loop catches, drops that one client, and carries on. The client sees a
+reset and can retry. Serving it inline instead would have been the tempting
+alternative and reintroduces the outage exactly when the machine is least able to
+afford it.
+
+Two things this does not fix. There is still no idle timeout, so a client that
+connects and says nothing holds a thread until it hangs up. And nothing bounds
+how many threads exist; the ceiling is whatever the process descriptor limit
+allows. Both are real, and both are leaks rather than outages, which is the whole
+difference: one bad client now costs a thread instead of the server. A pool
+bounds the count and a receive deadline bounds the wait, and they belong together
+in the milestone after this one.
+
+Testing it needed one compromise. `serve_forever` returns only when accepting
+fails, so a test cannot ask it to stop without `Listener` growing a `close()`
+whose only caller would be that test. The test detaches its server thread instead
+and lets it park in `accept()` for the life of the process. The listener moves
+into the thread rather than being leaked beside it, so nothing outside outlives
+what the thread is still using. The concurrency itself is asserted without
+measuring a clock: eight handlers have to be inside the server simultaneously
+before any of them may return, which one thread cannot arrange however long it is
+given.

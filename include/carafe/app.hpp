@@ -15,9 +15,10 @@ namespace carafe {
 
 class App {
 public:
-    // Out of line: Router is incomplete here, so neither can be emitted inline.
+    // Out of line: make_shared needs Router complete, and this header only forward-declares it.
     App();
-    ~App();
+
+    ~App() = default;
 
     // A moved-from App would still look runnable.
     App(const App&) = delete;
@@ -44,7 +45,7 @@ public:
     [[nodiscard]] bool run(std::uint16_t port);
 
 private:
-    std::unique_ptr<server::Router> router_;
+    std::shared_ptr<server::Router> router_;
 };
 
 }  // namespace carafe
