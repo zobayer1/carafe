@@ -1101,3 +1101,45 @@ what the thread is still using. The concurrency itself is asserted without
 measuring a clock: eight handlers have to be inside the server simultaneously
 before any of them may return, which one thread cannot arrange however long it is
 given.
+
+## Only the listener failing may end the server
+
+The accept loop used to treat one errno as routine and every other as final:
+`ECONNABORTED` meant a queued connection had hung up, and anything else meant the
+listener was finished. That reading is wrong about most of the list, and it is
+wrong in the direction that ends the process.
+
+`accept` reports three quite different kinds of thing through one channel. Some
+errors belong to the listening socket: `EBADF`, `EINVAL`, `ENOTSOCK`. Those are
+final, and retrying asks the same question forever. Some belong to the connection
+being accepted, and `accept(2)` is explicit that network errors for the new socket
+surface here, so `EPROTO`, `ETIMEDOUT` and the unreachable family are one client's
+bad luck. And some belong to the moment rather than to anything: `EMFILE`,
+`ENFILE`, `ENOMEM`, `ENOBUFS` say the kernel is out of something it will have
+again once a connection finishes.
+
+Only the first kind may end the server. That is the rule, and it is worth stating
+as a rule because the old code had the right instinct about `ECONNABORTED` and
+generalised it in the wrong direction. Sixty connections that each sent half a
+request line, against a descriptor budget of sixty-four, were enough to make the
+process exit. No requests, no malice past opening sockets, and afterwards nothing
+answered at all.
+
+The two survivable kinds want different treatment, which is why the answer is a
+three-valued enum rather than a bool. A connection that failed costs nothing to
+skip, so the loop asks again at once. Exhaustion costs a core if asked again at
+once, because the answer only changes when a thread somewhere finishes, so that
+one waits ten milliseconds first. A bool would have needed a second test naming
+`ECONNABORTED` again to tell those apart, and that test would have been the only
+thing recording the distinction.
+
+This is also the one place a `switch` here takes a `default`, against the habit of
+the rest of the tree. Elsewhere the missing default is what forces a new
+enumerator to be classified. `errno` is not an enum, nothing will announce a new
+value, and the safe answer for one nobody has considered is to stop rather than to
+spin quietly forever.
+
+What this does not do is make exhaustion harmless. The server survives and cannot
+serve anyone until the descriptors come back, and they come back only when the
+clients holding them relent. Making that recovery independent of the attacker is
+the idle timeout, not this.

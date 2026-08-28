@@ -285,6 +285,22 @@ first.
 
 What is not bounded is how many threads there are. A client that connects and
 sends nothing holds one until it hangs up, and nothing times it out, so the limit
-is the process descriptor limit rather than anything this server decides. That is
-a smaller problem than the one it replaces, and it is what the pool and
-idle-timeout milestone in the [roadmap](../README.md#roadmap) is for.
+is the process descriptor limit rather than anything this server decides.
+
+Reaching that limit is survivable but not comfortable. Accepting fails with
+`EMFILE`, the loop waits and asks again, and the server serves normally the moment
+a connection finishes and gives a descriptor back:
+
+```console
+$ ( ulimit -n 64; ./build/debug/bin/hello ) &     # a deliberately small budget
+$ # 80 connections, each sending a partial head and then nothing
+before the flood        200
+while exhausted         timed out
+after they hang up      200
+```
+
+The middle row is the honest part: the server is alive throughout, and unable to
+answer anyone while every descriptor is held by a client that will not let go.
+Getting those descriptors back without waiting for the client to relent is what
+the pool and idle-timeout milestone in the [roadmap](../README.md#roadmap) is
+for.

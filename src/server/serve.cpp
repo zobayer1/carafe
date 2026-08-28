@@ -9,6 +9,7 @@
 #include "server/connection.hpp"
 #include "server/router.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -18,6 +19,10 @@
 #include <vector>
 
 namespace carafe::server {
+
+// Long enough that an exhausted server is not spinning, short enough that a descriptor freed a moment later is not left
+// waiting on the clock.
+constexpr auto accept_retry_pause = std::chrono::milliseconds(10);
 
 namespace {
 
@@ -125,6 +130,39 @@ http::Response unmatched_response(const Router& router, std::string_view target,
     return response;
 }
 
+enum class AcceptRetry { Never, Immediately, AfterAPause };
+
+// Only the listener failing may end the server. A failure of the connection being accepted belongs to one client, and
+// exhaustion belongs to the moment: both leave a socket that still accepts.
+//
+// A list rather than a fallthrough, because errno is not an enum and nothing makes a new value announce itself.
+// Guessing "transient" for one that is not trades a server that stopped for a server that spins.
+[[nodiscard]] AcceptRetry accept_retry_for(int os_error) noexcept {
+    switch (os_error) {
+        // Given back as connections finish, so the wait is short and asking again at once only spends a core.
+        case EMFILE:
+        case ENFILE:
+        case ENOMEM:
+        case ENOBUFS:
+            return AcceptRetry::AfterAPause;
+
+        // The connection, not the socket that accepted it: a firewall refusing this one, a client gone from the queue,
+        // or any protocol error accept(2) says it may surface for the new socket.
+        case ECONNABORTED:
+        case EPERM:
+        case EPROTO:
+        case ETIMEDOUT:
+        case ENETDOWN:
+        case ENETUNREACH:
+        case EHOSTDOWN:
+        case EHOSTUNREACH:
+            return AcceptRetry::Immediately;
+
+        default:
+            return AcceptRetry::Never;
+    }
+}
+
 }  // namespace
 
 void serve_connection(Connection& conn, const Router& router) {
@@ -172,12 +210,16 @@ void serve_forever(net::Listener& listener, const std::shared_ptr<const Router>&
     while (true) {
         auto accepted = listener.accept();
         if (!accepted.client.has_value()) {
-            // A connection dying in the queue is routine. Anything else means the listener is finished, and retrying
-            // would spin hot on the same error.
-            if (accepted.os_error == ECONNABORTED) {
-                continue;
+            switch (accept_retry_for(accepted.os_error)) {
+                case AcceptRetry::Never:
+                    return;
+                case AcceptRetry::AfterAPause:
+                    std::this_thread::sleep_for(accept_retry_pause);
+                    break;
+                case AcceptRetry::Immediately:
+                    break;
             }
-            return;
+            continue;
         }
 
         // One thread each, so a client holding a persistent connection open cannot keep every other client waiting.
