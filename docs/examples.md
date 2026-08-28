@@ -300,9 +300,30 @@ finished rather than one that stalled, so the server hangs up without a word.
 A connection that had finished its last request and simply went idle is closed
 without a reply, because a client that asked for nothing is owed nothing.
 
-What is still unbounded is how many threads there are, and how slowly a client may
-feed a request it never finishes. The deadline is per read, so a byte every twenty
-seconds resets it indefinitely.
+Feeding a request slowly does not help either. The deadline for finishing a
+request runs from its first byte, not from its last, so a client sending one byte
+at a time is cut off on the same schedule as one sending nothing:
+
+```console
+$ # a byte every second, against a thirty second budget
+$ python3 -c "
+import socket, time
+s = socket.create_connection(('localhost', 8080))
+for byte in b'GET /hello HTTP/1.1':
+    s.sendall(bytes([byte])); time.sleep(1)
+print(s.recv(100).split(b'\r\n')[0].decode())"
+HTTP/1.1 408 Request Timeout
+```
+
+A client that stops *reading* is bounded by the same deadline applied to sending,
+so a response too large to sit in the socket buffers cannot hold a thread while
+nobody collects it. A response small enough to fit is already gone by the time the
+client ignores it, and holds nothing.
+
+What is still unbounded is how many threads there are. Nothing caps the count, so
+the ceiling is the process descriptor limit rather than anything this server
+chooses, and that is what the thread pool in the
+[roadmap](../README.md#roadmap) is for.
 
 Reaching that limit is survivable but not comfortable. Accepting fails with
 `EMFILE`, the loop waits and asks again, and the server serves normally the moment

@@ -18,7 +18,9 @@ struct ReadResult {
     }
 };
 
-// Every byte or none of them: a short write is an obligation, not a result, so this does not hand one back.
+// Every byte or a failure, with no count either way. A short write is an obligation while it can be met; where it
+// cannot, a send deadline having fired part-way, the connection is finished and a count says nothing worth acting
+// on.
 struct WriteResult {
     int os_error = 0;
 
@@ -53,12 +55,16 @@ public:
     // Up to `size` bytes into the caller's buffer. The view in the result points into that buffer and dies with it.
     [[nodiscard]] ReadResult read(char* buffer, std::size_t size);
 
-    // Every byte or a failure: EINTR is retried, so a short write never surfaces.
+    // Every byte or a failure: EINTR is retried, so a short write never surfaces on its own. A send deadline can
+    // stop one part-way, which is the only case where some bytes went and the result says failure.
     [[nodiscard]] WriteResult write(std::string_view bytes);
 
-    // A deadline on each recv, after which read() reports EAGAIN rather than waiting on. False when the socket refused
-    // it, which leaves the caller a connection whose reads it cannot bound.
-    [[nodiscard]] bool set_receive_timeout(std::chrono::milliseconds limit) noexcept;
+    // A deadline on each recv, after which read() reports EAGAIN rather than waiting on. Zero on success, otherwise the
+    // errno the socket refused with: a caller that cannot bound its reads needs the reason, not only the fact.
+    [[nodiscard]] int set_receive_timeout(std::chrono::milliseconds limit) noexcept;
+
+    // The same for send, so a peer that stops reading cannot hold a thread in write().
+    [[nodiscard]] int set_send_timeout(std::chrono::milliseconds limit) noexcept;
 
 private:
     int fd_ = -1;

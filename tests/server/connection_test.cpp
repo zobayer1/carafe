@@ -205,4 +205,17 @@ TEST(Connection, ReportsTheErrnoWhenTheReadFails) {
     EXPECT_FALSE(result.request.has_value());
 }
 
+// Connection is what applies the deadline, so a peer that stops reading has to be refused here and not merely be
+// refusable by the socket underneath.
+TEST(Connection, StopsWritingWhenThePeerStopsReading) {
+    auto pair = connected_pair();
+    Connection conn{std::move(pair.second),
+                    carafe::server::Deadlines{std::chrono::milliseconds(50), std::chrono::milliseconds(50)}};
+
+    const std::string more_than_fits(std::size_t{4} * 1024 * 1024, 'x');
+    const auto result = conn.write(more_than_fits);
+
+    EXPECT_FALSE(result);
+}
+
 }  // namespace

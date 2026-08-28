@@ -6,6 +6,7 @@
 #include "net/socket.hpp"
 
 #include <array>
+#include <chrono>
 #include <optional>
 #include <string_view>
 
@@ -30,11 +31,19 @@ struct ConnectionResult {
     }
 };
 
+// How long a connection may wait, in two parts. Separate because waiting for a request to begin should be generous to a
+// client with nothing to say yet, and waiting for one to finish should not: the second is the only one a client can
+// renew by sending anything at all.
+struct Deadlines {
+    std::chrono::milliseconds idle{std::chrono::seconds(30)};
+    std::chrono::milliseconds request{std::chrono::seconds(30)};
+};
+
 // A socket and the parser state for the bytes coming off it. Members rather than parameters: a half-received head lives
 // in the reader between reads, and sharing one would splice two clients into one request.
 class Connection {
 public:
-    explicit Connection(net::Socket socket);
+    explicit Connection(net::Socket socket, Deadlines deadlines = {});
 
     [[nodiscard]] ConnectionResult next_request();
 
@@ -53,6 +62,15 @@ private:
     http::RequestReader reader_;
     std::array<char, 4096> buffer_{};
     bool request_in_progress_ = false;
+    Deadlines deadlines_;
+
+    // When the request now arriving must be finished by. Set by the first byte of a request and not by each read: the
+    // per-read deadline it replaces is exactly what a slow drip renews for ever.
+    std::chrono::steady_clock::time_point request_deadline_{};
+
+    // The deadline the next read must carry, applied to the socket. Zero on success; otherwise an errno the caller
+    // reports as a read failure, because a read that cannot be bounded is one that may never return.
+    [[nodiscard]] int apply_read_deadline();
 };
 
 }  // namespace carafe::server

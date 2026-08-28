@@ -148,7 +148,8 @@ make PRESET=release test
 - [ ] Routing: normalising a pattern and a request path against each other
 - [x] Concurrency: a thread per connection, detached
 - [x] Concurrency: a receive deadline, so an idle connection stops holding a thread
-- [ ] Concurrency: a deadline on a whole request, and a thread pool to bound the count
+- [x] Concurrency: a deadline on a whole request, and on writing a response
+- [ ] Concurrency: a thread pool, to bound how many connections may be held at once
 - [ ] Middleware
 - [x] Keep-alive: the `Connection` field and the version's own default
 - [x] Chunked transfer encoding: chunk framing, extensions, and a dropped trailer section

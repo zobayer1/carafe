@@ -9,6 +9,7 @@
 #include "server/router.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -155,6 +156,12 @@ std::string chunk(std::string_view data) {
 }
 
 constexpr std::string_view last_chunk = "0\r\n\r\n";
+
+// Deadlines short enough to watch fire, one at a time. Reaching past Connection to set SO_RCVTIMEO on the socket would
+// be overwritten by the deadline it applies before every read. Only one limit is short in each, so a test cannot pass
+// because the wrong one fired.
+constexpr carafe::server::Deadlines brief_idle{std::chrono::milliseconds(50), std::chrono::seconds(5)};
+constexpr carafe::server::Deadlines brief_request{std::chrono::seconds(5), std::chrono::milliseconds(50)};
 
 constexpr std::string_view get_root = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
 
@@ -437,13 +444,14 @@ TEST(ServeConnection, WritesNothingWhenTheClientFinishesFirst) {
 TEST(ServeConnection, WritesNothingWhenTheReadFails) {
     auto pair = connected_pair();
 
-    const timeval deadline{0, suseconds_t{50} * 1000};
-    ASSERT_EQ(::setsockopt(pair.second.get(), SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof(deadline)), 0);
-
+    const auto started = std::chrono::steady_clock::now();
     {
-        Connection conn{std::move(pair.second)};
+        Connection conn{std::move(pair.second), brief_idle};
         serve_connection(conn, Router{});
     }
+
+    // The idle limit is the short one here, so waiting the request limit out instead would take a hundred times longer.
+    EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(1));
 
     std::array<char, 64> buf{};
     EXPECT_EQ(::recv(pair.first.get(), buf.data(), buf.size(), 0), ssize_t{0});
@@ -455,13 +463,14 @@ TEST(ServeConnection, WritesNothingMoreWhenAnAnsweredConnectionGoesIdle) {
     auto pair = connected_pair();
     send_all(pair.first, get_root);
 
-    const timeval deadline{0, suseconds_t{50} * 1000};
-    ASSERT_EQ(::setsockopt(pair.second.get(), SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof(deadline)), 0);
-
+    const auto started = std::chrono::steady_clock::now();
     {
-        Connection conn{std::move(pair.second)};
+        Connection conn{std::move(pair.second), brief_idle};
         serve_connection(conn, routing("/"));
     }
+
+    // The idle limit is the short one here, so waiting the request limit out instead would take a hundred times longer.
+    EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(1));
 
     std::string response;
     std::array<char, 4096> buf{};
@@ -477,19 +486,50 @@ TEST(ServeConnection, WritesNothingMoreWhenAnAnsweredConnectionGoesIdle) {
     EXPECT_EQ(response.find("408"), std::string::npos);
 }
 
+// A deadline renewed by every read is renewed for ever by a client that sends a byte and waits. Measuring from the
+// first byte of a request rather than the last is what ends this one: bytes keep arriving inside the idle limit the
+// whole time, and the request still runs out.
+TEST(ServeConnection, AnswersFourOhEightWhenARequestIsFedTooSlowly) {
+    auto pair = connected_pair();
+
+    std::thread drip([&pair] {
+        for (const char byte : std::string_view{"GET /hello HTTP/1.1\r\nHost: x\r\n\r\n"}) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            if (::send(pair.first.get(), &byte, 1, MSG_NOSIGNAL) != 1) {
+                return;  // the server gave up, which is what this is watching for
+            }
+        }
+    });
+
+    {
+        Connection conn{std::move(pair.second), brief_request};
+        serve_connection(conn, routing("/hello"));
+    }
+    drip.join();
+
+    std::string response;
+    std::array<char, 4096> buf{};
+    while (true) {
+        const ssize_t got = ::recv(pair.first.get(), buf.data(), buf.size(), 0);
+        if (got <= 0) {
+            break;
+        }
+        response.append(buf.data(), static_cast<std::size_t>(got));
+    }
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 408 Request Timeout");
+}
+
 // A client that got half a request out and then stopped has asked for something, so it is told what happened rather
 // than left to guess at a connection that closed. RFC 9110 §15.5.9, and the reply says it is closing because it is.
 TEST(ServeConnection, AnswersFourOhEightWhenARequestArrivesHalfWritten) {
     auto pair = connected_pair();
     send_all(pair.first, "GET /hel");
 
-    const timeval deadline{0, suseconds_t{50} * 1000};
-    ASSERT_EQ(::setsockopt(pair.second.get(), SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof(deadline)), 0);
-
     // Not serve_and_read: that half-closes the client first, and a read ending at end of stream is a client that
     // finished rather than one that stalled. Only a deadline reaches the reply below.
     {
-        Connection conn{std::move(pair.second)};
+        Connection conn{std::move(pair.second), brief_request};
         serve_connection(conn, routing("/hello"));
     }
 
@@ -580,7 +620,7 @@ TEST(ServeConnection, ServesTheRequestBehindARefusedBody) {
     });
 
     {
-        Connection conn{std::move(pair.second)};
+        Connection conn{std::move(pair.second), brief_idle};
         serve_connection(conn, routing("/"));
     }
     writer.join();

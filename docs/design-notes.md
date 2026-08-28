@@ -1187,3 +1187,55 @@ reading a response can still block a thread in `send`, which is the same shape a
 wants `SO_SNDTIMEO`. Both belong with the thread pool, because a pool without them
 is worse than no pool: a bounded number of workers held by clients who never
 finish is the original outage with a smaller number attached to it.
+
+## A deadline that every byte renews is not a deadline
+
+`SO_RCVTIMEO` bounds one `recv`, and that is not the same as bounding a request.
+A client sending a single byte and waiting resets the clock with each one, so five
+bytes over two minutes held a thread and a descriptor exactly as a silent client
+had before the deadline existed. The head cap bounds the bytes, not the time: at a
+byte every twenty seconds, sixty-four kilobytes is a fortnight away.
+
+So the limit that matters is measured from the first byte of a request rather than
+from the last, and the whole change is one `if`. Recording the deadline whenever
+bytes arrive would compile, would pass every test worth writing for the stalled
+client, and would preserve the bug exactly. It is recorded only on the transition
+into "a request is arriving", which is the same transition the `408` already
+turned on, so there is no second piece of state to keep in step.
+
+Two limits, not one. Waiting for a request to *begin* should be generous, because
+a client with nothing to say yet is an ordinary keep-alive connection. Waiting for
+one to *finish* should not, because that is the only clock a client can wind back
+by sending anything at all. They are separate fields for that reason, and the
+tests keep only one of them short at a time so that neither can pass on the other
+firing.
+
+The deadline surfaces as two different errnos, and both are honest. If the client
+stalls, the socket deadline fires first and `recv` reports `EAGAIN`. If the client
+drips, reads keep returning bytes until the request deadline has passed and the
+check ahead of the next read reports `ETIMEDOUT`. Which one arrives is a race
+between the two, so nothing pins it; both mean the request ran out of time, and
+both answer `408`.
+
+Sub-millisecond remainders are the trap here. `SO_RCVTIMEO` reads a zero `timeval`
+as *no deadline*, not as an immediate one, so truncating a remaining half
+millisecond down would turn the last instant of a deadline into an unbounded wait.
+Clamping to one millisecond fixes it and cannot be tested, since it needs a read
+returning bytes inside the final microseconds; treating anything under a
+millisecond as expired fixes it too, and is one guard instead of two.
+
+Moving all of this behind the `Connection` constructor was worth more than it
+looked. It made the request deadline testable in milliseconds, which it otherwise
+was not at any speed. It also showed that three existing tests had been setting
+`SO_RCVTIMEO` on the socket behind the server's back and were now being overridden
+by the real deadline: they still passed, by waiting the full thirty seconds each,
+and the suite went from one second to ninety-two. Tests that pass for the wrong
+reason are quiet until something makes them loud.
+
+The send side gets the same deadline for the same reason, since a client that
+stops reading holds a thread just as well as one that stops writing. It is not
+quite the equal of the receive side: `Socket::write` loops over partial sends and
+each `send` takes the deadline afresh, so a peer reading very slowly can still
+stretch a response larger than the socket buffer. Closing that means the write
+loop carrying a deadline of its own, which is the same surgery again in the other
+direction, and it waits.

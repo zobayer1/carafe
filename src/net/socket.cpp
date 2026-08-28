@@ -14,6 +14,21 @@
 
 namespace carafe::net {
 
+namespace {
+
+// SO_RCVTIMEO and SO_SNDTIMEO take the same timeval and mean the same thing in opposite directions. A zero timeval
+// means no deadline at all rather than an immediate one, which is why a caller computing a remainder clamps first.
+[[nodiscard]] int set_timeout(int fd, int option, std::chrono::milliseconds limit) noexcept {
+    const auto whole = std::chrono::duration_cast<std::chrono::seconds>(limit);
+    timeval deadline{};
+    deadline.tv_sec = static_cast<time_t>(whole.count());
+    deadline.tv_usec = static_cast<suseconds_t>((limit - whole) / std::chrono::microseconds(1));
+
+    return ::setsockopt(fd, SOL_SOCKET, option, &deadline, sizeof(deadline)) == 0 ? 0 : errno;
+}
+
+}  // namespace
+
 // Linux releases the descriptor even when close() reports EINTR, so retrying would close whatever another thread has
 // since opened into the slot.
 Socket::~Socket() {
@@ -75,12 +90,13 @@ WriteResult Socket::write(std::string_view bytes) {
 
 // Not const in a plainer sense than read and write: this changes how the socket behaves from here on.
 // NOLINTNEXTLINE(readability-make-member-function-const)
-bool Socket::set_receive_timeout(std::chrono::milliseconds limit) noexcept {
-    const auto whole = std::chrono::duration_cast<std::chrono::seconds>(limit);
-    timeval deadline{};
-    deadline.tv_sec = static_cast<time_t>(whole.count());
-    deadline.tv_usec = static_cast<suseconds_t>((limit - whole) / std::chrono::microseconds(1));
-    return ::setsockopt(fd_, SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof(deadline)) == 0;
+int Socket::set_receive_timeout(std::chrono::milliseconds limit) noexcept {
+    return set_timeout(fd_, SO_RCVTIMEO, limit);
+}
+
+// NOLINTNEXTLINE(readability-make-member-function-const)
+int Socket::set_send_timeout(std::chrono::milliseconds limit) noexcept {
+    return set_timeout(fd_, SO_SNDTIMEO, limit);
 }
 
 }  // namespace carafe::net

@@ -431,7 +431,7 @@ TEST(SocketWrite, RetriesWhenASignalArrivesBeforeAnyByteMoves) {
 // and a descriptor held for free.
 TEST(SocketReceiveTimeout, ReportsEagainWhenNothingArrivesInTime) {
     auto pair = connected_pair();
-    ASSERT_TRUE(pair.first.set_receive_timeout(std::chrono::milliseconds(50)));
+    ASSERT_EQ(pair.first.set_receive_timeout(std::chrono::milliseconds(50)), 0);
 
     std::array<char, 64> buf{};
     const ReadResult result = pair.first.read(buf.data(), buf.size());
@@ -444,13 +444,14 @@ TEST(SocketReceiveTimeout, ReportsEagainWhenNothingArrivesInTime) {
 // The caller is told, because a connection whose reads cannot be bounded is one the server would rather not take.
 TEST(SocketReceiveTimeout, ReportsFailureWhenTheDescriptorIsInvalid) {
     Socket empty{-1};
-    EXPECT_FALSE(empty.set_receive_timeout(std::chrono::milliseconds(50)));
+    // The errno survives, which is what the caller needs to report a connection it cannot bound.
+    EXPECT_EQ(empty.set_receive_timeout(std::chrono::milliseconds(50)), EBADF);
 }
 
 // The deadline bounds waiting, not reading: bytes already there are answered at once.
 TEST(SocketReceiveTimeout, LeavesAReadWithBytesWaitingAlone) {
     auto pair = connected_pair();
-    ASSERT_TRUE(pair.first.set_receive_timeout(std::chrono::milliseconds(50)));
+    ASSERT_EQ(pair.first.set_receive_timeout(std::chrono::milliseconds(50)), 0);
     ASSERT_TRUE(pair.second.write("hi"));
 
     std::array<char, 64> buf{};
@@ -464,7 +465,7 @@ TEST(SocketReceiveTimeout, LeavesAReadWithBytesWaitingAlone) {
 // arrives buys the sender the whole interval again.
 TEST(SocketReceiveTimeout, StartsOverWheneverAByteArrives) {
     auto pair = connected_pair();
-    ASSERT_TRUE(pair.first.set_receive_timeout(std::chrono::milliseconds(80)));
+    ASSERT_EQ(pair.first.set_receive_timeout(std::chrono::milliseconds(80)), 0);
 
     std::thread drip([&pair] {
         for (int i = 0; i < 3; ++i) {
@@ -479,6 +480,25 @@ TEST(SocketReceiveTimeout, StartsOverWheneverAByteArrives) {
         EXPECT_TRUE(result) << "read " << i << " errno " << result.os_error;
     }
     drip.join();
+}
+
+// The mirror of the receive deadline: a peer that stops reading fills the buffers and then holds the sender for as long
+// as it likes, which is a thread held by someone sending nothing at all.
+TEST(SocketSendTimeout, ReportsEagainWhenThePeerStopsReading) {
+    auto pair = connected_pair();
+    ASSERT_EQ(pair.first.set_send_timeout(std::chrono::milliseconds(50)), 0);
+
+    // Far more than any socket buffer holds, with nobody on the other end reading a byte of it.
+    const std::string more_than_fits(std::size_t{4} * 1024 * 1024, 'x');
+    const WriteResult result = pair.first.write(more_than_fits);
+
+    EXPECT_FALSE(result);
+    EXPECT_TRUE(result.os_error == EAGAIN || result.os_error == EWOULDBLOCK) << "errno " << result.os_error;
+}
+
+TEST(SocketSendTimeout, ReportsFailureWhenTheDescriptorIsInvalid) {
+    Socket empty{-1};
+    EXPECT_EQ(empty.set_send_timeout(std::chrono::milliseconds(50)), EBADF);
 }
 
 }  // namespace
