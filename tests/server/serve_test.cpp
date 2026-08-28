@@ -131,6 +131,26 @@ std::size_t declared_length(std::string_view response) {
     return std::stoul(std::string{response.substr(start, end - start)});
 }
 
+// Status lines, counted. A plain search is enough because every body these tests
+// produce is an echoed target or a status phrase, and neither carries a version.
+std::size_t response_count(std::string_view stream) {
+    std::size_t count = 0;
+    for (auto at = stream.find("HTTP/1.1 "); at != std::string_view::npos;
+         at = stream.find("HTTP/1.1 ", at + 1)) {
+        ++count;
+    }
+    return count;
+}
+
+// Only the first head varies. Both requests go out before the server runs, so the
+// count that comes back reports whether the connection outlived the first
+// response: after a close the second is left unread in the buffer.
+std::string serve_after(std::pair<Socket, Socket>& pair, std::string_view first_head) {
+    send_all(pair.first, first_head);
+    send_all(pair.first, "GET / HTTP/1.1\r\nHost: second.test\r\n\r\n");
+    return serve_and_read(pair, routing("/"));
+}
+
 constexpr std::string_view get_root = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
 
 TEST(ServeConnection, AnswersAGetWithATwoHundred) {
@@ -556,6 +576,122 @@ TEST(ServeConnection, AnswersAChunkedRequestWithFiveOhOne) {
     const std::string response = serve_and_read(pair, Router{});
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 501 Not Implemented");
+    EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
+}
+
+// RFC 9112 §9.3: an HTTP/1.0 client that did not ask to stay open is waiting for
+// the close to learn the response ended. Answering and then holding the socket
+// leaves it hanging until its own timeout fires.
+TEST(ServeConnection, ClosesAfterAnHttpTenRequestThatDidNotAskToStayOpen) {
+    auto pair = connected_pair();
+    const std::string response = serve_after(pair, "GET / HTTP/1.0\r\nHost: a.test\r\n\r\n");
+
+    // Answered in full first: closing is what follows the response, not what
+    // replaces it.
+    EXPECT_EQ(status_line(response), "HTTP/1.1 200 OK");
+    EXPECT_NE(body_of(response).find("you asked for /"), std::string_view::npos);
+    EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
+    EXPECT_EQ(response_count(response), 1U);
+}
+
+// The 1.0 spelling of "keep it open". Honouring it is what makes the rule above a
+// default rather than a blanket close on every 1.0 request.
+TEST(ServeConnection, KeepsAnHttpTenConnectionTheClientAskedToKeep) {
+    auto pair = connected_pair();
+    const std::string response =
+        serve_after(pair, "GET / HTTP/1.0\r\nHost: a.test\r\nConnection: keep-alive\r\n\r\n");
+
+    EXPECT_EQ(response_count(response), 2U);
+    EXPECT_EQ(response.find("connection: close"), std::string::npos);
+}
+
+// RFC 9110 §7.6.1: the client is announcing its last request on this connection,
+// and 1.1 being persistent by default does not outrank having been asked.
+TEST(ServeConnection, ClosesWhenAnHttpOneOneClientAsks) {
+    auto pair = connected_pair();
+    const std::string response =
+        serve_after(pair, "GET / HTTP/1.1\r\nHost: a.test\r\nConnection: close\r\n\r\n");
+
+    EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
+    EXPECT_EQ(response_count(response), 1U);
+}
+
+// The option is case-insensitive, and clients spell this one both ways.
+TEST(ServeConnection, MatchesTheConnectionOptionWhateverItsCase) {
+    auto pair = connected_pair();
+    const std::string response =
+        serve_after(pair, "GET / HTTP/1.1\r\nHost: a.test\r\nConnection: ClOsE\r\n\r\n");
+
+    EXPECT_EQ(response_count(response), 1U);
+}
+
+// A list rather than a single token, and RFC 9112 §9.3 makes close win over a
+// keep-alive sharing it.
+TEST(ServeConnection, FindsCloseAmongTheOtherConnectionOptions) {
+    auto pair = connected_pair();
+    const std::string response = serve_after(
+        pair, "GET / HTTP/1.1\r\nHost: a.test\r\nConnection: keep-alive, close\r\n\r\n");
+
+    EXPECT_EQ(response_count(response), 1U);
+}
+
+// RFC 9110 §5.3 folds a repeated field into one list, so a client may spell that
+// list across two fields and mean exactly the same thing.
+TEST(ServeConnection, FindsCloseInARepeatedConnectionField) {
+    auto pair = connected_pair();
+    const std::string response = serve_after(pair,
+                                             "GET / HTTP/1.1\r\nHost: a.test\r\n"
+                                             "Connection: keep-alive\r\nConnection: close\r\n\r\n");
+
+    EXPECT_EQ(response_count(response), 1U);
+}
+
+// RFC 9110 §5.6.1: the OWS around a list element is not part of it. This element
+// needs trimming at both ends, so dropping either trim leaves it unmatched.
+TEST(ServeConnection, IgnoresTheSpaceAroundAConnectionOption) {
+    auto pair = connected_pair();
+    const std::string response = serve_after(
+        pair, "GET / HTTP/1.1\r\nHost: a.test\r\nConnection: keep-alive , close , x\r\n\r\n");
+
+    EXPECT_EQ(response_count(response), 1U);
+}
+
+// An option is a whole token. "closed" is one nobody implements, and ignoring it
+// is not the same as reading it as the option it happens to begin with.
+TEST(ServeConnection, IgnoresAnOptionThatMerelyStartsWithClose) {
+    auto pair = connected_pair();
+    const std::string response =
+        serve_after(pair, "GET / HTTP/1.1\r\nHost: a.test\r\nConnection: closed\r\n\r\n");
+
+    EXPECT_EQ(response_count(response), 2U);
+    EXPECT_EQ(response.find("connection: close"), std::string::npos);
+}
+
+// The header goes on before serialize, so it survives a response that carries no
+// body: RFC 9110 §9.3.2 wants HEAD's fields to match the GET's, and this is one
+// the GET would have sent.
+TEST(ServeConnection, SendsTheCloseHeaderOnAHeadResponse) {
+    auto pair = connected_pair();
+    send_all(pair.first, "HEAD / HTTP/1.0\r\nHost: a.test\r\n\r\n");
+
+    const std::string response = serve_and_read(pair, routing("/"));
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 200 OK");
+    EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
+    EXPECT_TRUE(body_of(response).empty());
+}
+
+// The same refusal as AnswersAnOversizedBodyWithoutClosing, from a client that
+// reads a close as the end of the response. The failure carries no headers, so
+// the version is all there is to go on, and it is enough.
+TEST(ServeConnection, ClosesOnAnOversizedBodyFromAnHttpTenClient) {
+    auto pair = connected_pair();
+    send_all(pair.first,
+             "POST /submit HTTP/1.0\r\nHost: example.test\r\nContent-Length: 1048577\r\n\r\n");
+
+    const std::string response = serve_and_read(pair, Router{});
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 413 Content Too Large");
     EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
 }
 

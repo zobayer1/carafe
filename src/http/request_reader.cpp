@@ -107,12 +107,12 @@ RequestResult RequestReader::finish_request() {
 
 RequestResult RequestReader::fail(RequestError error) {
     failure_ = error;
-    return {error, std::nullopt, false};
+    return {error, std::nullopt, false, request_.version};
 }
 
 RequestResult RequestReader::refuse(RequestError error) {
     phase_ = Phase::Discard;
-    return {error, std::nullopt, true};
+    return {error, std::nullopt, true, request_.version};
 }
 
 void RequestReader::append(std::string_view bytes) {

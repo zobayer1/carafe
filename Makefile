@@ -17,7 +17,7 @@ CXX_FILES    = $(shell find $(SOURCE_DIRS) -type f \( -name '*.cpp' -o -name '*.
         tidy debug release asan coverage compdb
 
 help: ## Show this help
-	@echo "carafe -- available targets:"
+	@echo "carafe: available targets"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 	@echo ""
@@ -56,7 +56,7 @@ coverage: ## Build + test with gcov, then print a coverage summary
 	@command -v gcovr >/dev/null 2>&1 \
 		&& gcovr --root . --filter 'src/|include/' --exclude-unreachable-branches \
 			--print-summary build/coverage \
-		|| echo "gcovr not installed -- try: pipx install gcovr"
+		|| echo "gcovr not installed. try: pipx install gcovr"
 
 format: ## Reformat all sources in place with clang-format
 	@echo "$(CXX_FILES)" | tr ' ' '\n' | grep . | xargs -r clang-format -i
@@ -77,7 +77,7 @@ RUN_CLANG_TIDY := $(firstword \
     $(shell command -v run-clang-tidy.py 2>/dev/null))
 
 # Named explicitly as well, since a distribution's driver otherwise runs its own
-# versioned clang-tidy and ignores PATH -- so a pinned toolchain installed
+# versioned clang-tidy and ignores PATH: a pinned toolchain installed
 # alongside one is silently not the toolchain that runs.
 TIDY_BINARY := $(if $(CLANG_TIDY),-clang-tidy-binary $(CLANG_TIDY),)
 
@@ -87,7 +87,7 @@ TIDY_BINARY := $(if $(CLANG_TIDY),-clang-tidy-binary $(CLANG_TIDY),)
 # what lets test code relax a check the library holds itself to.
 #
 # Warnings are errors here and nowhere else. clang-tidy exits 0 on a warning, so
-# without this the target reports every finding and then succeeds -- a gate that
+# without this the target reports every finding and then succeeds: a gate that
 # prints its failures and passes anyway.
 #
 # The serial fallback says what it is not covering: a narrowed check that looks
@@ -98,8 +98,31 @@ tidy: build ## Run clang-tidy over the project sources
 		$(RUN_CLANG_TIDY) $(TIDY_BINARY) -warnings-as-errors='*' \
 			-p $(BUILD_DIR) -quiet '^$(CURDIR)/(src|tests|examples)/'; \
 	else \
-		echo "run-clang-tidy not found -- checking src/ only; tests/ and examples/ unchecked"; \
+		echo "run-clang-tidy not found: checking src/ only; tests/ and examples/ unchecked"; \
 		clang-tidy --warnings-as-errors='*' -p $(BUILD_DIR) $(shell find src -name '*.cpp'); \
+	fi
+
+# tidy is parallel already, so its wall clock is whichever translation unit is
+# slowest, and a gtest file spends around 40s parsing headers against 0.4s of
+# actual checks. Narrowing the file list is the only lever left. It pays when a
+# change stays inside src/ and buys nothing when a test file moved, which is why
+# it prints what it looked at: a narrowed check that looks like a passing one is
+# worse than no check at all.
+tidy-quick: build ## Run clang-tidy over the .cpp files changed against HEAD
+	@files=$$( { git diff --name-only HEAD -- '*.cpp'; \
+	             git ls-files --others --exclude-standard -- '*.cpp'; } | sort -u ); \
+	if [ -z "$$files" ]; then \
+		echo "no changed .cpp files, nothing to check"; \
+		exit 0; \
+	fi; \
+	echo "$$files" | sed 's/^/  /'; \
+	echo "narrowed to the files above; a header change moves findings into files"; \
+	echo "not listed, so 'make tidy' stays the gate"; \
+	if [ -n "$(RUN_CLANG_TIDY)" ]; then \
+		$(RUN_CLANG_TIDY) $(TIDY_BINARY) -warnings-as-errors='*' -p $(BUILD_DIR) -quiet \
+			"^$(CURDIR)/($$(echo "$$files" | paste -sd'|' -))$$"; \
+	else \
+		$(CLANG_TIDY) --warnings-as-errors='*' -p $(BUILD_DIR) $$files; \
 	fi
 
 compdb: $(BUILD_DIR)/CMakeCache.txt ## Symlink compile_commands.json to the project root

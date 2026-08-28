@@ -557,4 +557,37 @@ TEST(RequestReader, EndsTheStreamOnAFailureItCannotReadPast) {
     }
 }
 
+// The version outlives the failure: a refusal hands over no Request, and the
+// caller still has to decide whether the client is waiting for a close.
+TEST(RequestReader, ReportsTheVersionOfARefusedRequest) {
+    const std::string length = std::to_string(max_body_bytes + 1);
+
+    RequestReader ten;
+    ten.append("POST /p HTTP/1.0\r\nContent-Length: " + length + "\r\n\r\n");
+    const auto refused_ten = ten.next_request();
+    EXPECT_EQ(refused_ten.error, RequestError::BodyTooLarge);
+    EXPECT_EQ(refused_ten.version, Version::Http10);
+
+    RequestReader eleven;
+    eleven.append("POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: " + length + "\r\n\r\n");
+    const auto refused_eleven = eleven.next_request();
+    EXPECT_EQ(refused_eleven.error, RequestError::BodyTooLarge);
+    EXPECT_EQ(refused_eleven.version, Version::Http11);
+}
+
+// A latched failure repeats its whole answer, version included: the caller may
+// ask again before it decides what to write.
+TEST(RequestReader, KeepsTheVersionOnARepeatedFailure) {
+    RequestReader reader;
+    reader.append("POST /p HTTP/1.0\r\nTransfer-Encoding: chunked\r\n\r\n");
+
+    const auto first = reader.next_request();
+    EXPECT_EQ(first.error, RequestError::UnsupportedTransferEncoding);
+    EXPECT_EQ(first.version, Version::Http10);
+
+    const auto again = reader.next_request();
+    EXPECT_EQ(again.error, RequestError::UnsupportedTransferEncoding);
+    EXPECT_EQ(again.version, Version::Http10);
+}
+
 }  // namespace

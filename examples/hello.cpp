@@ -2,9 +2,9 @@
 // responder are joined up, plus enough routes to drive a body through by hand.
 // docs/examples.md walks through what each one answers.
 //
-// Connections are served one at a time, to completion, and kept alive until the
-// client hangs up, so a browser holding a connection open locks everyone else
-// out. That is what the concurrency milestone is for.
+// Connections are served one at a time, to completion, and a persistent one is
+// held until the client hangs up, so a browser holding one open locks everyone
+// else out. That is what the concurrency milestone is for.
 
 #include <carafe/app.hpp>
 #include <carafe/http/request.hpp>

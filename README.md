@@ -148,7 +148,8 @@ make PRESET=release test
 - [ ] Routing: normalising a pattern and a request path against each other
 - [ ] Concurrency: thread-per-connection, then a thread pool
 - [ ] Middleware
-- [ ] Keep-alive, chunked transfer encoding
+- [x] Keep-alive: the `Connection` field and the version's own default
+- [ ] Chunked transfer encoding
 - [ ] Static file serving
 - [ ] Portability: a socket layer that is not Linux-only
 

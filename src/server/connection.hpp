@@ -23,6 +23,10 @@ struct ConnectionResult {
     // caller answers this failure and closes rather than looking for another request.
     bool stream_continues = true;
 
+    // Forwarded from the reader, and meaningful on a failure: a success carries
+    // its own version inside the Request.
+    http::Version version{};
+
     [[nodiscard]] explicit operator bool() const noexcept {
         return error == http::RequestError::None && os_error == 0;
     }

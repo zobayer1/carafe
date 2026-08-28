@@ -18,7 +18,8 @@ ConnectionResult Connection::next_request() {
         // Anything but "nothing yet": a failure carries no request, a success
         // carries one, and both carry whatever the reader said about the stream.
         if (!parsed || parsed.request) {
-            return {parsed.error, 0, std::move(parsed.request), parsed.stream_continues};
+            return {parsed.error, 0, std::move(parsed.request), parsed.stream_continues,
+                    parsed.version};
         }
 
         const auto chunk = socket_.read(buffer_.data(), buffer_.size());

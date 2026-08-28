@@ -919,3 +919,59 @@ reader.
 The value itself is the one genuinely arbitrary constant here. Eight megabytes
 buys back the connection for an upload a little over the limit and refuses to
 spend the afternoon on one that is wildly over it. Nothing derives it.
+
+## The client decides when the connection ends
+
+Until now the server never read the `Connection` field. It answered a request,
+went back to waiting for the next one, and let the client hang up when it was
+finished. That is correct for exactly one kind of client: an HTTP/1.1 one that
+said nothing.
+
+RFC 9112 §9.3 puts the default in the version. HTTP/1.1 is persistent unless the
+client says otherwise; HTTP/1.0 is not unless the client asks. An HTTP/1.0 client
+learns that a response ended by watching the connection close, so holding the
+socket open after answering one leaves it blocked on an end that never comes. It
+recovers on its own timeout, seconds later, which is the whole difference between
+a server that works and one that appears not to. A client that sent
+`Connection: close` was ignored just as completely, though it recovers faster by
+closing the connection itself.
+
+The decision therefore has two inputs. The version supplies a default and the
+field overrides it, and `close` is definitive: `Connection: keep-alive, close` is
+a legal list and §9.3 makes the close win, which is why `client_wants_close` looks
+for it before it consults the version at all.
+
+Reading the field is fussier than it looks. §7.6.1 makes it a comma-separated list
+of case-insensitive connection options, §5.3 lets a client spell one list across
+several `Connection` fields and mean the same thing, and §5.6.1 puts optional
+whitespace around every element. `Connection: closed` is an option nobody
+implements rather than a `close` with a letter stuck on the end. Each of those is
+a line of code and a test, and getting any of them wrong fails in the direction
+that hangs a client rather than the direction that closes early.
+
+§9.6 wants the response that ends a connection to say so. Without the field a
+client cannot tell a deliberate end from a reply that was cut short, which is the
+same ambiguity `content-length` exists to remove. Announcing and closing are one
+decision, so `answer` performs both and returns whether the connection survived;
+a caller cannot announce a close and then forget to make one, or close without
+having said it.
+
+The failure path is coarser on purpose. A failed parse hands over no headers, so
+there is nothing to check for a `keep-alive`, and an HTTP/1.0 request that failed
+is closed on whether or not it would have asked to stay. A server may always
+close, so that sits inside §9.3; the opposite mistake leaves a client waiting.
+That is the whole reason `RequestResult` carries a version out of a failure: it is
+the one piece of the request that survives, and the only piece this decision
+needs.
+
+What did not change is `operator bool`. It answers whether the request parsed, and
+a version is not a verdict on that — an HTTP/1.0 request that parsed cleanly is a
+success. Persistence is settled after the response is written, on the success
+branch and the failure branch alike, which is the same reason `stream_continues`
+never belonged in the operator either.
+
+One thing is deliberately left undone. A handler that puts `connection: close` on
+its own response gets it serialized and then ignored: the connection stays open,
+and if the client also asked, the field goes out twice. Letting a handler end a
+connection is a real feature, but nothing needs it yet, and until something does
+the framework owns the connection's lifetime by itself.

@@ -3,10 +3,12 @@
 #include <carafe/http/request.hpp>
 #include <carafe/http/response.hpp>
 
+#include "http/ascii.hpp"
 #include "http/request_reader.hpp"
 #include "server/connection.hpp"
 #include "server/router.hpp"
 
+#include <cstddef>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -40,6 +42,74 @@ int status_for(http::RequestError error) {
     return 400;
 }
 
+// RFC 9110 §7.6.1: a comma-separated list of case-insensitive connection options.
+// §5.3 folds a repeated field into one list, so every connection field is scanned
+// and not just the first. `option` must already be lowercase.
+[[nodiscard]] bool has_connection_option(const http::Headers& headers,
+                                         std::string_view option) noexcept {
+    for (const auto& header : headers) {
+        // Stored lowercased by Headers::add, so a plain compare is enough.
+        if (header.name != "connection") {
+            continue;
+        }
+        const std::string_view value = header.value;
+        std::size_t start = 0;
+        while (start < value.size()) {
+            std::size_t end = value.find(',', start);
+            if (end == std::string_view::npos) {
+                end = value.size();
+            }
+            std::string_view token = value.substr(start, end - start);
+
+            // RFC 9110 §5.6.1: OWS around a list element is not part of it, and
+            // §5.6.3 makes that SP or HTAB alone.
+            while (!token.empty() && (token.front() == ' ' || token.front() == '\t')) {
+                token.remove_prefix(1);
+            }
+            while (!token.empty() && (token.back() == ' ' || token.back() == '\t')) {
+                token.remove_suffix(1);
+            }
+
+            if (http::ascii_equals_lowered(option, token)) {
+                return true;
+            }
+            start = end + 1;
+        }
+    }
+    return false;
+}
+
+// RFC 9112 §9.3: persistent by default on HTTP/1.1, and not on HTTP/1.0 unless the
+// client asks. "close" is definitive either way, so it is tested first.
+[[nodiscard]] bool client_wants_close(const http::Request& request) noexcept {
+    if (has_connection_option(request.headers, "close")) {
+        return true;
+    }
+
+    // No default: a new version states its own persistence rather than inheriting
+    // 1.1's.
+    switch (request.version) {
+        case http::Version::Http10:
+            return !has_connection_option(request.headers, "keep-alive");
+        case http::Version::Http11:
+            break;
+    }
+    return false;
+}
+
+// Sends one response and reports whether the connection outlives it. The close is
+// announced before it is performed, RFC 9112 §9.6, or a client cannot tell a
+// deliberate end from a truncated reply.
+[[nodiscard]] bool answer(Connection& conn, http::Response response, bool closing, bool with_body) {
+    if (closing) {
+        response.headers.add({"connection", "close"});
+    }
+    if (!conn.write(response.serialize(with_body))) {
+        return false;  // nobody left to answer
+    }
+    return !closing;
+}
+
 // The body names the status: a bare 404 tells a terminal reader nothing.
 http::Response status_response(int status) {
     std::string body = std::to_string(status);
@@ -47,16 +117,6 @@ http::Response status_response(int status) {
     body += http::status_message(status);
     body += '\n';
     return http::text_response(status, std::move(body));
-}
-
-// connection: close only when the stream cannot be resynchronised. A refusal the
-// reader can read past leaves the connection as healthy as a 404 does.
-http::Response parse_error_response(http::RequestError error, const bool stream_continues) {
-    http::Response response = status_response(status_for(error));
-    if (!stream_continues) {
-        response.headers.add({"connection", "close"});
-    }
-    return response;
 }
 
 // Comma-separated, as RFC 9110 spells the field. Method names are case-sensitive
@@ -96,17 +156,17 @@ void serve_connection(Connection& conn, const Router& router) {
                 return;
             }
 
-            const http::Response response =
-                parse_error_response(result.error, result.stream_continues);
-            if (!conn.write(response.serialize())) {
-                return;  // nobody left to answer
-            }
+            http::Response response = status_response(status_for(result.error));
 
-            // Only the reader knows whether the next request line is findable, and
-            // the reply just sent told the client which answer it gave.
-            if (!result.stream_continues) {
+            // Two reasons to close, and a failure carries no headers to consult: a
+            // 1.0 client that did ask to stay open is closed on anyway. Legal, and
+            // the other way round leaves one that did not ask waiting forever.
+            if (!answer(conn, std::move(response),
+                        !result.stream_continues || result.version == http::Version::Http10,
+                        true)) {
                 return;
             }
+
             continue;
         }
 
@@ -121,12 +181,13 @@ void serve_connection(Connection& conn, const Router& router) {
         // empty vector rather than a branch.
         request.params = std::move(match.params);
 
-        const http::Response response =
+        http::Response response =
             match ? (*match.handler)(request)
                   : unmatched_response(router, request.target, match.path_matched);
 
-        if (!conn.write(response.serialize(request.method != http::Method::Head))) {
-            return;  // nobody left to answer
+        if (!answer(conn, std::move(response), client_wants_close(request),
+                    request.method != http::Method::Head)) {
+            return;
         }
     }
 }

@@ -33,6 +33,10 @@ struct RequestResult {
     // every failure but a body it is willing to read and drop.
     bool stream_continues = true;
 
+    // The version the failed request declared. RFC 9112 §9.3 leaves an HTTP/1.0
+    // client waiting for a close, and a failure carries no Request to read it from.
+    Version version{};
+
     [[nodiscard]] explicit operator bool() const noexcept {
         return error == RequestError::None;
     }

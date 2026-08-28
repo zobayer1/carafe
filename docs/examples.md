@@ -86,11 +86,78 @@ curl -i http://localhost:8080/hello/a%2Fb            # hello, a/b!
 curl -i --path-as-is http://localhost:8080/hello/a%25b  # hello, a%b!
 ```
 
+## How long the connection lives
+
+Every row is one connection carrying a single `GET /hello`. The question is what
+the server does once it has answered.
+
+| Request                                | After the response                     |
+| -------------------------------------- | -------------------------------------- |
+| `HTTP/1.1`, no `Connection` field       | held open                              |
+| `HTTP/1.1` with `Connection: close`     | closed, and the response says so       |
+| `HTTP/1.0`, no `Connection` field       | closed, and the response says so       |
+| `HTTP/1.0` with `Connection: keep-alive`| held open                              |
+
+RFC 9112 §9.3 supplies the defaults in rows one and three: HTTP/1.1 is persistent
+unless told otherwise, HTTP/1.0 is not unless asked. The `Connection` field
+overrides either. `close` wins whenever it appears, so `Connection: keep-alive,
+close` closes.
+
+Rows two and three are the ones that used to hang. The server never read the
+field at all and held every connection open, which is right for exactly one
+client: an HTTP/1.1 one that said nothing. An HTTP/1.0 client learns the response
+ended by seeing the connection close, so it sat waiting for an end that was never
+coming, and a client that had explicitly asked to close was ignored.
+
+Where the connection is closed, the response carries `connection: close` before
+the bytes stop, per RFC 9112 §9.6. Without it a client cannot tell a deliberate
+end from a reply that was cut short.
+
+```sh
+curl -i --http1.0 http://localhost:8080/hello
+curl -i -H 'Connection: close' http://localhost:8080/hello
+```
+
+`curl` closes the connection itself either way, so it will not show you the
+difference. This does:
+
+```python
+import socket
+
+def probe(label, request):
+    s = socket.create_connection(("localhost", 8080)); s.settimeout(2)
+    s.sendall(request.encode())
+    out = b""
+    try:
+        while True:
+            chunk = s.recv(65536)
+            if not chunk:
+                break
+            out += chunk
+    except socket.timeout:
+        print(f"{label:<34} held open"); s.close(); return
+    s.close()
+    said = "connection: close" in out.decode(errors="replace").lower()
+    print(f"{label:<34} closed, announced: {said}")
+
+probe("1.1, nothing said", "GET /hello HTTP/1.1\r\nHost: x\r\n\r\n")
+probe("1.1, Connection: close", "GET /hello HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+probe("1.0, nothing said", "GET /hello HTTP/1.0\r\nHost: x\r\n\r\n")
+probe("1.0, Connection: keep-alive", "GET /hello HTTP/1.0\r\nHost: x\r\nConnection: keep-alive\r\n\r\n")
+```
+
+A failure the reader cannot resume from closes regardless of any of this: there
+is no way to find where the next request begins. A refusal it *can* read past,
+such as the oversized body below, keeps an HTTP/1.1 connection open and closes an
+HTTP/1.0 one, because a failure hands over no headers to check for a
+`keep-alive`.
+
 ## Bodies, and what happens to the connection
 
-Every row below is one connection carrying a `POST /echo` with the framing named,
-followed by a `GET /hello/world`. What matters is the second column: whether that
-follow-up was answered on the *same* connection.
+Every row below is one HTTP/1.1 connection carrying a `POST /echo` with the
+framing named, followed by a `GET /hello/world`. What matters is the second
+column: whether that follow-up was answered on the *same* connection. On HTTP/1.0
+every row would close, for the reason above.
 
 | Framing on the POST                 | Responses      | `connection: close` |
 | ----------------------------------- | -------------- | ------------------- |
