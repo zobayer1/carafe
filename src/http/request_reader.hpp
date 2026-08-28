@@ -53,7 +53,7 @@ public:
     [[nodiscard]] RequestResult next_request();
 
 private:
-    enum class Phase { RequestLine, Headers, Body, Discard };
+    enum class Phase { RequestLine, Headers, Body, Discard, ChunkSize, ChunkData, Trailers };
 
     // Loses the stream: the failure latches and every later call repeats it.
     [[nodiscard]] RequestResult fail(RequestError error);
@@ -71,7 +71,16 @@ private:
 
     // Engaged means "hand this to the caller"; empty means "read another line".
     [[nodiscard]] std::optional<RequestResult> handle_request_line(std::string_view line);
+    [[nodiscard]] std::optional<RequestResult> handle_trailer_line(std::string_view line);
     [[nodiscard]] std::optional<RequestResult> handle_field_line(std::string_view line);
+    [[nodiscard]] std::optional<RequestResult> handle_chunk_size(std::string_view line);
+
+    // The phases that consume body bytes rather than lines: a declared body, a chunk's data, or a refusal being
+    // drained. Engaged means an answer for the caller, empty means go round again.
+    [[nodiscard]] std::optional<RequestResult> read_body_bytes();
+
+    // The phases that consume a line, and the caps that bound one. Same convention as above.
+    [[nodiscard]] std::optional<RequestResult> read_next_line();
 
     // Validates the assembled head and decides what follows it: a request to hand over, a failure, or a body still to
     // be read.
@@ -83,6 +92,7 @@ private:
     RequestError failure_ = RequestError::None;
     std::size_t head_bytes_ = 0;
     std::size_t body_bytes_ = 0;
+    std::size_t chunk_bytes_ = 0;
     std::size_t field_count_ = 0;
 };
 

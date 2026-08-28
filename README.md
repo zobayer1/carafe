@@ -149,7 +149,7 @@ make PRESET=release test
 - [ ] Concurrency: thread-per-connection, then a thread pool
 - [ ] Middleware
 - [x] Keep-alive: the `Connection` field and the version's own default
-- [ ] Chunked transfer encoding
+- [x] Chunked transfer encoding: chunk framing, extensions, and a dropped trailer section
 - [ ] Static file serving
 - [ ] Portability: a socket layer that is not Linux-only
 

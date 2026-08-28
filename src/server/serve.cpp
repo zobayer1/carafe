@@ -4,6 +4,7 @@
 #include <carafe/http/response.hpp>
 
 #include "http/ascii.hpp"
+#include "http/field_list.hpp"
 #include "http/request_reader.hpp"
 #include "server/connection.hpp"
 #include "server/router.hpp"
@@ -51,25 +52,10 @@ int status_for(http::RequestError error) {
         }
         const std::string_view value = header.value;
         std::size_t start = 0;
-        while (start < value.size()) {
-            std::size_t end = value.find(',', start);
-            if (end == std::string_view::npos) {
-                end = value.size();
-            }
-            std::string_view token = value.substr(start, end - start);
-
-            // RFC 9110 §5.6.1: OWS around a list element is not part of it, and §5.6.3 makes that SP or HTAB alone.
-            while (!token.empty() && (token.front() == ' ' || token.front() == '\t')) {
-                token.remove_prefix(1);
-            }
-            while (!token.empty() && (token.back() == ' ' || token.back() == '\t')) {
-                token.remove_suffix(1);
-            }
-
-            if (http::ascii_equals_lowered(option, token)) {
+        while (const auto token = http::next_list_element(value, start)) {
+            if (http::ascii_equals_lowered(option, *token)) {
                 return true;
             }
-            start = end + 1;
         }
     }
     return false;

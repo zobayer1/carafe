@@ -3,6 +3,8 @@
 #include <carafe/http/handler.hpp>
 #include <carafe/http/request.hpp>
 
+#include "http/ascii.hpp"
+
 #include <algorithm>
 #include <string>
 #include <string_view>
@@ -21,20 +23,6 @@ std::string_view path_of(std::string_view target) noexcept {
     return target.substr(0, target.find('?'));
 }
 
-[[nodiscard]] constexpr int hex_value(char ch) noexcept {
-    const auto u_ch = static_cast<unsigned char>(ch);
-    if (u_ch >= '0' && u_ch <= '9') {
-        return u_ch - '0';
-    }
-    if (u_ch >= 'a' && u_ch <= 'f') {
-        return u_ch - 'a' + 10;
-    }
-    if (u_ch >= 'A' && u_ch <= 'F') {
-        return u_ch - 'A' + 10;
-    }
-    return -1;
-}
-
 // An escape that is not "%" HEXDIG HEXDIG is copied as it stands. Unreachable in a served request, since the parser
 // rejects those first. Even so, find() states no precondition, and a decoder assuming one reads past the end for "%4".
 [[nodiscard]] std::string percent_decode(std::string_view text) {
@@ -44,8 +32,8 @@ std::string_view path_of(std::string_view target) noexcept {
     for (size_type i = 0; i < text.size(); ++i) {
         // Two steps, not one condition: text[i + 2] has to stay behind the bounds test, and only the first line carries
         // it.
-        const int high = i + 2 < text.size() ? hex_value(text[i + 1]) : -1;
-        const int low = high < 0 ? -1 : hex_value(text[i + 2]);
+        const int high = i + 2 < text.size() ? http::ascii_hex_value(text[i + 1]) : -1;
+        const int low = high < 0 ? -1 : http::ascii_hex_value(text[i + 2]);
 
         if (text[i] != '%' || low < 0) {
             decoded.push_back(text[i]);

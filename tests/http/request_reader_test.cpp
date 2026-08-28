@@ -50,6 +50,27 @@ std::string post_body(std::string_view body) {
            std::string{body};
 }
 
+// One chunk: its size in lowercase hex, then its bytes, each closed by CRLF.
+std::string chunk(std::string_view data) {
+    constexpr std::string_view hex_digits = "0123456789abcdef";
+    std::string size;
+    for (std::size_t left = data.size(); left > 0; left /= 16) {
+        size.insert(size.begin(), hex_digits.at(left % 16));
+    }
+    if (size.empty()) {
+        size = "0";
+    }
+    return size + "\r\n" + std::string{data} + "\r\n";
+}
+
+// The zero-size chunk and an empty trailer section, which is what ends a chunked body.
+constexpr std::string_view last_chunk = "0\r\n\r\n";
+
+// A POST framed by chunked coding, carrying `body` between the head and whatever ends it.
+std::string post_chunked(std::string_view body) {
+    return "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n" + std::string{body};
+}
+
 // A POST whose Content-Length carries `value`, with no body following.
 RequestResult content_length_result(std::string_view value) {
     RequestReader reader;
@@ -365,8 +386,8 @@ TEST(RequestReader, TreatsAZeroContentLengthAsNoBody) {
     EXPECT_TRUE(result.request->body.empty());
 }
 
-// The bug this closes: unconsumed body bytes used to parse as the next request line, answering an ordinary GET with
-// 501.
+// Unconsumed body bytes parse as the next request line, so an ordinary GET behind a body comes back 501. Reading the
+// body to its end is what keeps the two apart.
 TEST(RequestReader, KeepsBodyBytesOutOfTheNextRequestLine) {
     RequestReader reader;
     reader.append(
@@ -462,23 +483,65 @@ TEST(RequestReader, RejectsARepeatedContentLength) {
     EXPECT_EQ(result.error, RequestError::Malformed);
 }
 
-TEST(RequestReader, RejectsAnyTransferEncoding) {
-    for (const std::string_view coding : {"chunked", "gzip", "identity"}) {
+// RFC 9112 §6.1 and §6.3 give three answers, not one. Chunked last means the body's end is findable, so a coding under
+// it is only undecodable; chunked anywhere else, or twice, means the end cannot be found at all.
+TEST(RequestReader, ClassifiesTheTransferCodings) {
+    struct Case {
+        std::string_view coding;
+        RequestError error;
+    };
+
+    for (const Case test :
+         {Case{"chunked", RequestError::None}, Case{"gzip, chunked", RequestError::UnsupportedTransferEncoding},
+          Case{"chunked, gzip", RequestError::Malformed}, Case{"gzip", RequestError::Malformed},
+          Case{"chunked, chunked", RequestError::Malformed}, Case{"", RequestError::Malformed}}) {
         RequestReader reader;
         std::string bytes = "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: ";
-        bytes += coding;
+        bytes += test.coding;
         bytes += "\r\n\r\n";
-        EXPECT_EQ(read(reader, bytes).error, RequestError::UnsupportedTransferEncoding) << "coding: " << coding;
+        bytes += last_chunk;
+        EXPECT_EQ(read(reader, bytes).error, test.error) << "coding: " << test.coding;
     }
 }
 
-// Tested first, so the pair that smuggles a request past one recipient never reaches the length rule at all.
-TEST(RequestReader, RejectsTransferEncodingAheadOfContentLength) {
+// §5.3 again: one coding list may be spelt across several fields, and which field a coding sits in must not change
+// the answer. Reading only the first is how a recipient concludes "chunked" from a list that ends in something else.
+TEST(RequestReader, FoldsRepeatedTransferEncodingFields) {
+    RequestReader undecodable;
+    EXPECT_EQ(read(undecodable,
+                   "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip\r\n"
+                   "Transfer-Encoding: chunked\r\n\r\n0\r\n\r\n")
+                  .error,
+              RequestError::UnsupportedTransferEncoding);
+
+    RequestReader unframeable;
+    EXPECT_EQ(read(unframeable,
+                   "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n"
+                   "Transfer-Encoding: gzip\r\n\r\n0\r\n\r\n")
+                  .error,
+              RequestError::Malformed);
+}
+
+// §6.1: a 1.0 client cannot know the next hop speaks 1.1, so honouring a chunked body from one desynchronises it.
+TEST(RequestReader, RejectsChunkedFromAnHttpTenClient) {
     RequestReader reader;
-    const auto result = read(reader,
-                             "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nContent-Length: 3\r\n"
-                             "\r\nabc");
-    EXPECT_EQ(result.error, RequestError::UnsupportedTransferEncoding);
+    const auto result = read(reader, "POST /p HTTP/1.0\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n");
+    EXPECT_EQ(result.error, RequestError::Malformed);
+    EXPECT_FALSE(result.stream_continues);
+}
+
+// RFC 9112 §6.3 rule 3: the pair is refused before either field is read for framing, and the coding does not matter.
+// One recipient preferring the length and the next preferring the coding is exactly how a request gets smuggled.
+TEST(RequestReader, RejectsTransferEncodingAlongsideContentLength) {
+    for (const std::string_view coding : {"chunked", "gzip"}) {
+        RequestReader reader;
+        std::string bytes = "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: ";
+        bytes += coding;
+        bytes += "\r\nContent-Length: 3\r\n\r\nabc";
+        const auto result = read(reader, bytes);
+        EXPECT_EQ(result.error, RequestError::Malformed) << "coding: " << coding;
+        EXPECT_FALSE(result.stream_continues) << "coding: " << coding;
+    }
 }
 
 // Past the drain ceiling the length is known and refused anyway: reading that much only to throw it away costs more
@@ -527,7 +590,7 @@ TEST(RequestReader, DrainsARefusedBodyAcrossAppends) {
 TEST(RequestReader, EndsTheStreamOnAFailureItCannotReadPast) {
     for (const std::string_view head :
          {"NOTAREQUEST\r\n\r\n", "GET / HTTP/1.1\r\nHost: x\r\nbad header\r\n\r\n", "GET / HTTP/2.0\r\nHost: x\r\n\r\n",
-          "FROB / HTTP/1.1\r\nHost: x\r\n\r\n", "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n",
+          "FROB / HTTP/1.1\r\nHost: x\r\n\r\n", "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip\r\n\r\n",
           "POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: abc\r\n\r\n"}) {
         RequestReader reader;
         const auto result = read(reader, head);
@@ -561,12 +624,180 @@ TEST(RequestReader, KeepsTheVersionOnARepeatedFailure) {
     reader.append("POST /p HTTP/1.0\r\nTransfer-Encoding: chunked\r\n\r\n");
 
     const auto first = reader.next_request();
-    EXPECT_EQ(first.error, RequestError::UnsupportedTransferEncoding);
+    EXPECT_EQ(first.error, RequestError::Malformed);
     EXPECT_EQ(first.version, Version::Http10);
 
     const auto again = reader.next_request();
-    EXPECT_EQ(again.error, RequestError::UnsupportedTransferEncoding);
+    EXPECT_EQ(again.error, RequestError::Malformed);
     EXPECT_EQ(again.version, Version::Http10);
+}
+
+// A body arriving in pieces that declare their own sizes, with no total anywhere: the end is findable only from the
+// chunks themselves.
+TEST(RequestReader, ReadsAChunkedBody) {
+    RequestReader reader;
+    const auto result = read(reader, post_chunked(chunk("hello") + chunk(" world") + std::string{last_chunk}));
+
+    ASSERT_TRUE(result.request.has_value()) << "unexpected error: " << result.error;
+    EXPECT_EQ(result.request->body, "hello world");
+}
+
+// Every boundary inside a chunked body, including mid-size-line and mid-chunk, since none of them arrive aligned.
+TEST(RequestReader, ReadsAChunkedBodyAcrossAppends) {
+    RequestReader reader;
+    const auto result = read_bytewise(reader, post_chunked(chunk("hello") + chunk(" world") + std::string{last_chunk}));
+
+    ASSERT_TRUE(result.request.has_value()) << "unexpected error: " << result.error;
+    EXPECT_EQ(result.request->body, "hello world");
+}
+
+// A declared zero and a body of no chunks are the same request, and neither carries bytes.
+TEST(RequestReader, ReadsAnEmptyChunkedBody) {
+    RequestReader reader;
+    const auto result = read(reader, post_chunked(std::string{last_chunk}));
+
+    ASSERT_TRUE(result.request.has_value()) << "unexpected error: " << result.error;
+    EXPECT_TRUE(result.request->body.empty());
+}
+
+// The same guarantee Content-Length bodies get: the reader knows where this body ended, so the next request starts
+// where it says it does rather than inside the leftovers.
+TEST(RequestReader, ReadsARequestPipelinedBehindAChunkedBody) {
+    RequestReader reader;
+    reader.append(post_chunked(chunk("abc") + std::string{last_chunk}) + "GET /b HTTP/1.1\r\nHost: y\r\n\r\n");
+
+    const auto first = reader.next_request();
+    ASSERT_TRUE(first.request.has_value()) << "unexpected error: " << first.error;
+    EXPECT_EQ(first.request->body, "abc");
+
+    const auto next = reader.next_request();
+    ASSERT_TRUE(next.request.has_value()) << "unexpected error: " << next.error;
+    EXPECT_EQ(next.request->target, "/b");
+    EXPECT_TRUE(next.request->body.empty());
+}
+
+// RFC 9112 §7.1.1: an extension is there to be ignored, and ignoring it must not shift where the size ends.
+TEST(RequestReader, IgnoresAChunkExtension) {
+    RequestReader reader;
+    const auto result = read(reader, post_chunked("5;name=value\r\nhello\r\n" + std::string{last_chunk}));
+
+    ASSERT_TRUE(result.request.has_value()) << "unexpected error: " << result.error;
+    EXPECT_EQ(result.request->body, "hello");
+}
+
+// §7.1: the CRLF after the data is framing, not data. A chunk without it has lied about its size, and believing the
+// size anyway is what leaves the next request starting mid-body.
+TEST(RequestReader, RejectsAChunkThatDoesNotEndInCrlf) {
+    RequestReader reader;
+    const auto result = read(reader, post_chunked("5\r\nhelloXX" + std::string{last_chunk}));
+
+    EXPECT_EQ(result.error, RequestError::Malformed);
+    EXPECT_FALSE(result.stream_continues);
+}
+
+// §7.1: chunk-size = 1*HEXDIG, whole. BWS is refused too: senders must not generate it, and whitespace a framing
+// parser forgives is how two recipients disagree about where a body ends.
+TEST(RequestReader, RejectsANonHexChunkSize) {
+    for (const std::string_view size : {"z", "5x", "-1", "0x5", "+5", "", "5 ", " 5"}) {
+        RequestReader reader;
+        std::string bytes = post_chunked("");
+        bytes += size;
+        bytes += "\r\nhello\r\n";
+        EXPECT_EQ(read(reader, bytes).error, RequestError::Malformed) << "size: " << size;
+    }
+}
+
+// Refused on the size line, before a byte of the chunk is buffered, the way a Content-Length over the cap is.
+TEST(RequestReader, RejectsAChunkSizeOverTheCap) {
+    RequestReader reader;
+    const auto result = read(reader, post_chunked("100001\r\n"));
+
+    EXPECT_EQ(result.error, RequestError::BodyTooLarge);
+}
+
+// Bounded before the multiply overflows, so a size can never wrap into a smaller one. 2^64 wraps to zero and would end
+// the body early; one digit further and it wraps to a short chunk, leaving the rest of the body to parse as a request.
+// The cumulative cap cannot catch either, because by then the number is already small.
+TEST(RequestReader, RejectsAChunkSizeTooLargeToHold) {
+    for (const std::string_view size : {"10000000000000000", "10000000000000005", "ffffffffffffffffff"}) {
+        RequestReader reader;
+        std::string bytes = post_chunked("");
+        bytes += size;
+        bytes += "\r\nhello\r\n";
+        EXPECT_EQ(read(reader, bytes).error, RequestError::BodyTooLarge) << "size: " << size;
+    }
+}
+
+// No total is ever declared, so the cap has to be applied as the body grows. Two chunks, each legal alone.
+TEST(RequestReader, RejectsChunksThatAddPastTheCap) {
+    const std::string half((max_body_bytes / 2) + 1, 'b');
+
+    RequestReader reader;
+    reader.append(post_chunked(chunk(half) + chunk(half)));
+    const auto result = reader.next_request();
+
+    EXPECT_EQ(result.error, RequestError::BodyTooLarge);
+    EXPECT_FALSE(result.stream_continues);
+}
+
+// An over-long size line is a broken body, not a header block. Reporting 431 here would tell a client its fields were
+// too large when it sent two.
+TEST(RequestReader, ReportsAnOverlongChunkSizeLineAsMalformed) {
+    RequestReader reader;
+    const auto result = read(reader, post_chunked(std::string(max_line_length + 1, '0') + "\r\n"));
+
+    EXPECT_EQ(result.error, RequestError::Malformed);
+}
+
+// Chunk-size lines are body framing, not head. Charging them to the head cap rejected an upload a fiftieth of the size
+// the body cap allows, purely for arriving in small pieces.
+TEST(RequestReader, KeepsChunkSizeLinesOutOfTheHeadCap) {
+    constexpr std::size_t chunks = 22000;
+    std::string body;
+    for (std::size_t i = 0; i < chunks; ++i) {
+        body += chunk("x");
+    }
+
+    RequestReader reader;
+    reader.append(post_chunked(body + std::string{last_chunk}));
+    const auto result = reader.next_request();
+
+    ASSERT_TRUE(result.request.has_value()) << "unexpected error: " << result.error;
+    EXPECT_EQ(result.request->body.size(), chunks);
+}
+
+// RFC 9112 §7.1.2: the trailer section is read and dropped. Merging one into the head would put fields there after the
+// head has already been validated, which is the whole reason a trailer is worth smuggling.
+TEST(RequestReader, DropsTheTrailerSection) {
+    RequestReader reader;
+    const auto result = read(reader, post_chunked(chunk("hello") + "0\r\nX-Trailer: v\r\nX-Another: w\r\n\r\n"));
+
+    ASSERT_TRUE(result.request.has_value()) << "unexpected error: " << result.error;
+    EXPECT_EQ(result.request->body, "hello");
+    EXPECT_FALSE(result.request->headers.contains("x-trailer"));
+    EXPECT_EQ(result.request->headers.size(), 2U);
+}
+
+// Dropped, but not unread: a trailer section that is not field lines is a framing error like any other.
+TEST(RequestReader, RejectsAMalformedTrailerField) {
+    RequestReader reader;
+    const auto result = read(reader, post_chunked(chunk("hi") + "0\r\nnot a field\r\n\r\n"));
+
+    EXPECT_EQ(result.error, RequestError::Malformed);
+}
+
+// The same cap the head block carries, for the same reason: dropping a field still costs the read that found it.
+TEST(RequestReader, RejectsTooManyTrailerFields) {
+    std::string trailers = "0\r\n";
+    for (std::size_t i = 0; i <= max_header_fields; ++i) {
+        trailers += "X-Filler-" + std::to_string(i) + ": v\r\n";
+    }
+    trailers += "\r\n";
+
+    RequestReader reader;
+    const auto result = read(reader, post_chunked(chunk("hi") + trailers));
+
+    EXPECT_EQ(result.error, RequestError::TooManyHeaders);
 }
 
 }  // namespace

@@ -142,6 +142,20 @@ std::string serve_after(std::pair<Socket, Socket>& pair, std::string_view first_
     return serve_and_read(pair, routing("/"));
 }
 
+// One chunk: its size in lowercase hex, then its bytes, each closed by CRLF. Only small sizes are needed here, so a
+// single digit covers every case the serve tests build.
+std::string chunk(std::string_view data) {
+    constexpr std::string_view hex_digits = "0123456789abcdef";
+    std::string out;
+    out += hex_digits.at(data.size());
+    out += "\r\n";
+    out += data;
+    out += "\r\n";
+    return out;
+}
+
+constexpr std::string_view last_chunk = "0\r\n\r\n";
+
 constexpr std::string_view get_root = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
 
 TEST(ServeConnection, AnswersAGetWithATwoHundred) {
@@ -460,7 +474,8 @@ TEST(ServeConnection, HandsTheBodyToTheHandler) {
     EXPECT_EQ(body_of(response), "hello world");
 }
 
-// The bug this closes, end to end: the body used to parse as the next request line, so the GET behind it came back 501.
+// The same hazard end to end: a body left unread parses as the next request line, so the GET behind it comes back 501
+// and the connection dies with it.
 TEST(ServeConnection, AnswersARequestPipelinedBehindABody) {
     auto pair = connected_pair();
     send_all(pair.first,
@@ -537,14 +552,61 @@ TEST(ServeConnection, AnswersAnUndrainableBodyWithFourThirteenAndCloses) {
     EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
 }
 
-// No transfer coding is implemented, and one we cannot decode leaves nowhere to resume from.
-TEST(ServeConnection, AnswersAChunkedRequestWithFiveOhOne) {
+// A body whose length is never declared anywhere, reassembled from the sizes the chunks carry.
+TEST(ServeConnection, AnswersAChunkedRequest) {
     auto pair = connected_pair();
-    send_all(pair.first, "POST /submit HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\n\r\n");
+    send_all(pair.first, "POST /submit HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\n\r\n" +
+                             chunk("hello") + chunk(" world") + std::string{last_chunk});
+
+    Router router;
+    router.add(Method::Post, "/submit", echo_body());
+    const std::string response = serve_and_read(pair, router);
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 200 OK");
+    EXPECT_EQ(body_of(response), "hello world");
+}
+
+// The end-to-end version of the property chunked framing turns on: the reader knows where the body stopped, so the
+// request behind it is answered rather than parsed out of its leftovers.
+TEST(ServeConnection, ServesARequestPipelinedBehindAChunkedBody) {
+    auto pair = connected_pair();
+    send_all(pair.first, "POST /submit HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\n\r\n" +
+                             chunk("abc") + std::string{last_chunk} + std::string{get_root});
+
+    Router router;
+    router.add(Method::Post, "/submit", echo_body());
+    router.add(Method::Get, "/", echo());
+    const std::string response = serve_and_read(pair, router);
+
+    EXPECT_EQ(response_count(response), 2U);
+    EXPECT_NE(response.find("abc"), std::string::npos);
+    EXPECT_NE(response.find("you asked for /"), std::string::npos);
+    EXPECT_EQ(response.find("connection: close"), std::string::npos);
+}
+
+// Chunked is final, so the body's end is findable, but gzip under it is not ours to decode. Still 501, and still a
+// close: we can find the end without being able to hand the handler anything meaningful.
+TEST(ServeConnection, AnswersAnUndecodableCodingWithFiveOhOne) {
+    auto pair = connected_pair();
+    send_all(pair.first, "POST /submit HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: gzip, chunked\r\n\r\n");
 
     const std::string response = serve_and_read(pair, Router{});
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 501 Not Implemented");
+    EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
+}
+
+// RFC 9112 §6.3 rule 3: answered and closed, because a connection carrying this pair is one two recipients have
+// already disagreed about.
+TEST(ServeConnection, AnswersTheFramingPairWithFourHundred) {
+    auto pair = connected_pair();
+    send_all(pair.first,
+             "POST /submit HTTP/1.1\r\nHost: example.test\r\n"
+             "Transfer-Encoding: chunked\r\nContent-Length: 3\r\n\r\nabc");
+
+    const std::string response = serve_and_read(pair, Router{});
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 400 Bad Request");
     EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
 }
 

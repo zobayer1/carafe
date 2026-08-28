@@ -152,6 +152,31 @@ such as the oversized body below, keeps an HTTP/1.1 connection open and closes a
 HTTP/1.0 one, because a failure hands over no headers to check for a
 `keep-alive`.
 
+## A body whose length is never declared
+
+`curl` sends a chunked body whenever it is uploading something it cannot measure
+in advance, which is any stream:
+
+```sh
+printf 'hello world' | curl -i -X POST --data-binary @- \
+    -H 'Transfer-Encoding: chunked' http://localhost:8080/echo
+head -c 100000 /dev/zero | tr '\0' 'x' | curl -s -X POST --data-binary @- \
+    -H 'Transfer-Encoding: chunked' http://localhost:8080/size
+```
+
+Each chunk states its own size in hex, and a zero-size chunk ends the body:
+
+```
+POST /echo HTTP/1.1
+Transfer-Encoding: chunked
+
+5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n
+```
+
+Anything after that zero and before the blank line is the trailer section, which
+this server reads and **drops**. Trailers arrive after the head has already been
+validated, so merging one in would let a field arrive somewhere nothing checks it.
+
 ## Bodies, and what happens to the connection
 
 Every row below is one HTTP/1.1 connection carrying a `POST /echo` with the
@@ -167,7 +192,10 @@ every row would close, for the reason above.
 | a `GET` carrying a body             | `200`, `200`   | no                  |
 | a 2 MB body (over the 1 MiB limit)  | `413`, `200`   | no                  |
 | `Content-Length: 9000000`           | `413`          | yes                 |
-| `Transfer-Encoding: chunked`        | `501`          | yes                 |
+| `Transfer-Encoding: chunked`        | `200`, `200`   | no                  |
+| `Transfer-Encoding: gzip, chunked`  | `501`          | yes                 |
+| `Transfer-Encoding: chunked, gzip`  | `400`          | yes                 |
+| chunked **and** a `Content-Length`  | `400`          | yes                 |
 | `Content-Length: abc`               | `400`          | yes                 |
 | `Content-Length: 3` given twice     | `400`          | yes                 |
 
@@ -175,6 +203,15 @@ The first row is the one worth staring at. Before bodies were read, those three
 bytes stayed in the buffer and the next request line parsed as `abcGET`, so an
 ordinary `GET` came back `501 Not Implemented` and the connection died. Framing
 does not consult the method, which is why row four behaves the same way.
+
+The chunked rows are the §6.1 and §6.3 decision in miniature. `chunked` last
+means the body's end is findable, so it is read like any other body and the
+connection survives. A coding *under* chunked leaves the end findable but the
+content undecodable, which is a `501`. Chunked anywhere but last, or a coding
+list with no chunked at all, leaves nowhere to stop reading, so there is nothing
+to resume from. And chunked alongside a `Content-Length` is refused before either
+is used for framing: two recipients preferring different fields is precisely how
+a request gets smuggled past one of them.
 
 Rows five and six are the same status with opposite consequences. A body over
 the limit is refused on its declared `Content-Length` before a byte of it is

@@ -975,3 +975,73 @@ its own response gets it serialized and then ignored: the connection stays open,
 and if the client also asked, the field goes out twice. Letting a handler end a
 connection is a real feature, but nothing needs it yet, and until something does
 the framework owns the connection's lifetime by itself.
+
+## A coding list is a decision table, not a feature flag
+
+`Transfer-Encoding` used to be one line: if the field is present at all, answer
+501 and close. That is a defensible placeholder and a bad rule, because the field
+names a *list*, and RFC 9112 §6.1 and §6.3 give three different answers depending
+on where in that list `chunked` sits.
+
+If `chunked` is last, the body's end is findable, because each chunk says how long
+it is and a zero-length one ends the sequence. If something else sits under it,
+the end is still findable and the content is still undecodable, which is a 501
+about the content rather than the framing. If `chunked` is anywhere but last, or
+absent entirely, there is no way to know where the body stops, and that is a 400:
+not "we did not implement this" but "this message cannot be read by anyone". And
+`chunked` twice is the same answer for the same reason.
+
+The pair rule sits above all of it. A message carrying both `Transfer-Encoding`
+and `Content-Length` is refused before either is consulted, whatever the coding
+is, because the danger is not in either field but in the disagreement: one
+recipient frames by the length, the next frames by the coding, and the bytes in
+between become a request only one of them can see. §6.3 rule 3 says 400 and close,
+and closing is the part that matters.
+
+RFC 9110 §5.3 makes the walk fussier than it looks. `Transfer-Encoding: gzip`
+followed by `Transfer-Encoding: chunked` is the same list as
+`Transfer-Encoding: gzip, chunked`, so every matching field has to be walked as
+one, and a reader that stops at the first would conclude "chunked" from a list
+that ends in something else. That is the same field-folding rule the `Connection`
+work needed, which is why `next_list_element` exists in a header of its own rather
+than twice in two files.
+
+## The body is the thing that is never declared
+
+A chunked body is the first one this reader handles whose length it is never
+told. Everything the `Content-Length` work established has to be re-derived from
+nothing: the size cap, the overflow bound, the point at which a refusal happens.
+
+The cap moved from a single test to a running one. There is no total to compare
+against, so each chunk is added to what has already arrived and the sum is checked
+before the bytes are taken. The overflow bound moved too, and it is the subtler
+of the two. `parse_chunk_size` stops counting at the body cap not because that is
+where the refusal belongs, but because a size line may carry 8192 hex digits and
+`0x10000000000000000` wraps to zero on a 64-bit `size_t`. A wrapped size does not
+produce a wrong error; it produces a *plausible* one. Zero ends the body early,
+and a size that wraps to five frames a five-byte chunk and leaves the rest of the
+body to be parsed as the next request. The cumulative check cannot catch either,
+because by the time it runs the number is already small.
+
+Chunk-size lines are deliberately not charged to the head cap. They are framing
+for the body, and counting them there rejected a 22 KB upload, a fiftieth of what
+the body cap allows, purely for arriving in one-byte pieces, and told the client
+its header fields were too large. The same reasoning gives an over-long chunk-size
+line a 400 rather than the 431 the head phases report: only the reader knows which
+line it asked for.
+
+The trailer section is read and dropped. Keeping it would be a small feature and a
+real hazard: the head has already been validated by the time a trailer arrives, so
+a field admitted there is a field that arrived somewhere nothing checks it. It is
+still parsed before being discarded, because a trailer section that is not field
+lines is a framing error like any other, and swallowing arbitrary bytes until a
+blank line is exactly the sort of hole a smuggled request fits through.
+
+Two limits are deliberate rather than discovered. An oversized chunked body fails
+and closes instead of draining, unlike a declared one, which is a step back from
+*Refusing a request is not the same as losing the stream*: draining is possible
+here, since the sizes are self-describing, but it needs its own state and the
+ceiling reapplied per chunk. And framing overhead is bounded only indirectly.
+Every chunk carries at least one byte, so a 1 MiB cap admits at most a million
+chunks, but a client sending them one byte at a time makes us read about six
+megabytes to get there. Bounded, not tight.

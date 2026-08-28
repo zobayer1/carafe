@@ -14,6 +14,7 @@ set(CARAFE_HEADERS
     "${PROJECT_SOURCE_DIR}/include/carafe/http/request.hpp"
     "${PROJECT_SOURCE_DIR}/include/carafe/http/response.hpp"
     http/ascii.hpp
+    http/field_list.hpp
     http/line_reader.hpp
     http/request_parser.hpp
     http/request_reader.hpp
