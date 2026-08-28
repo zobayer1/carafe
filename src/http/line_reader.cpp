@@ -15,8 +15,8 @@ constexpr std::size_t max_line_length = 8192;
 constexpr std::string_view crlf{"\r\n"};
 
 void LineReader::append(std::string_view bytes) {
-    // Only once the dead prefix outweighs what is left, so no compaction moves more
-    // bytes than it reclaims. Both indices are offsets, so both shift.
+    // Only once the dead prefix outweighs what is left, so no compaction moves more bytes than it reclaims. Both
+    // indices are offsets, so both shift.
     if (begin_ > 0 && (begin_ * 2 >= buffer_.size())) {
         buffer_.erase(0, begin_);
         scanned_ -= begin_;
@@ -46,8 +46,7 @@ LineResult LineReader::next_line() {
         return LineResult{LineError::None, std::nullopt};
     }
 
-    // Checked here too, or one large append walks past a cap guarding only the
-    // search failure.
+    // Checked here too, or one large append walks past a cap guarding only the search failure.
     if (crlf_pos - begin_ > max_line_length) {
         return LineResult{LineError::LineTooLong, {}};
     }

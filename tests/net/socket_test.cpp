@@ -23,8 +23,8 @@ using carafe::test::AlarmIn;
 using carafe::test::alarms_delivered;
 using carafe::test::mask_alarm;
 
-// AF_UNIX needs no address, port, or network stack: the cheapest real descriptor,
-// and what it connects to never matters here.
+// AF_UNIX needs no address, port, or network stack: the cheapest real descriptor, and what it connects to never matters
+// here.
 int make_fd() {
     const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     EXPECT_NE(fd, -1);
@@ -36,16 +36,14 @@ bool is_open(int fd) {
     return ::fcntl(fd, F_GETFD) != -1;
 }
 
-// Two connected sockets with no address, port, or listener in sight: read only
-// needs something with a far end.
+// Two connected sockets with no address, port, or listener in sight: read only needs something with a far end.
 std::pair<Socket, Socket> connected_pair() {
     std::array<int, 2> fds{-1, -1};
     EXPECT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds.data()), 0);
     return {Socket{fds[0]}, Socket{fds[1]}};
 }
 
-// Distinctive content, so a prefix sent twice shows up as a mismatch instead of
-// as bytes that happen to look right.
+// Distinctive content, so a prefix sent twice shows up as a mismatch instead of as bytes that happen to look right.
 std::string pattern(std::size_t size) {
     std::string out(size, '\0');
     for (std::size_t i = 0; i < size; ++i) {
@@ -54,14 +52,13 @@ std::string pattern(std::size_t size) {
     return out;
 }
 
-// Stuffs the socket buffer until it will take no more, so the next send has
-// nowhere to put anything and blocks before moving a single byte.
+// Stuffs the socket buffer until it will take no more, so the next send has nowhere to put anything and blocks before
+// moving a single byte.
 std::size_t fill_send_buffer(const Socket& sock) {
     std::size_t total = 0;
     const std::array<char, 4096> block{};
     while (true) {
-        const ssize_t sent =
-            ::send(sock.get(), block.data(), block.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
+        const ssize_t sent = ::send(sock.get(), block.data(), block.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
         if (sent == -1) {
             return total;
         }
@@ -69,8 +66,8 @@ std::size_t fill_send_buffer(const Socket& sock) {
     }
 }
 
-// A reader that gives up eventually. Without this, a write that stops early leaves
-// the draining thread blocked forever, so the suite hangs where it should go red.
+// A reader that gives up eventually. Without this, a write that stops early leaves the draining thread blocked forever,
+// so the suite hangs where it should go red.
 void set_read_timeout(const Socket& sock, int millis) {
     timeval timeout{};
     timeout.tv_sec = millis / 1000;
@@ -132,8 +129,8 @@ TEST(Socket, MoveConstructionTransfersTheDescriptor) {
 
     EXPECT_EQ(target.get(), fd);
     EXPECT_TRUE(is_open(fd));
-    // Inspecting a moved-from Socket is the point: this class specifies that
-    // state as empty, where the standard library only promises "unspecified".
+    // Inspecting a moved-from Socket is the point: this class specifies that state as empty, where the standard library
+    // only promises "unspecified".
     // NOLINTNEXTLINE(bugprone-use-after-move,clang-analyzer-cplusplus.Move)
     EXPECT_FALSE(source.valid());
 }
@@ -180,8 +177,8 @@ TEST(Socket, MoveAssignmentFromAnEmptySocketClosesTheTarget) {
     EXPECT_FALSE(target.valid());
 }
 
-// Unguarded, this closes the descriptor and then takes it straight back.
-// Written through a reference because -Wself-move rejects the direct spelling.
+// Unguarded, this closes the descriptor and then takes it straight back. Written through a reference because
+// -Wself-move rejects the direct spelling.
 TEST(Socket, SelfMoveAssignmentKeepsTheDescriptor) {
     const int fd = make_fd();
     Socket sock{fd};
@@ -219,8 +216,8 @@ TEST(SocketRead, ViewsTheCallersBufferRatherThanACopy) {
     EXPECT_EQ(result.bytes->data(), buf.data());
 }
 
-// Short reads are the norm, not an edge case: asking for 4096 does not wait for
-// 4096, which is why RequestReader is fed incrementally.
+// Short reads are the norm, not an edge case: asking for 4096 does not wait for 4096, which is why RequestReader is fed
+// incrementally.
 TEST(SocketRead, ReturnsOnlyWhatHasArrived) {
     auto [reader, writer] = connected_pair();
     ASSERT_EQ(::send(writer.get(), "ab", 2, 0), ssize_t{2});
@@ -273,8 +270,8 @@ TEST(SocketRead, ReportsTheErrnoWhenTheDescriptorIsInvalid) {
     EXPECT_FALSE(result.bytes.has_value());
 }
 
-// The alarm fires while read is blocked and the bytes arrive only later, so
-// without the retry loop this returns EINTR instead of data.
+// The alarm fires while read is blocked and the bytes arrive only later, so without the retry loop this returns EINTR
+// instead of data.
 TEST(SocketRead, KeepsWaitingWhenASignalInterruptsIt) {
     auto [reader, writer] = connected_pair();
     const int writer_fd = writer.get();
@@ -312,8 +309,8 @@ TEST(SocketWrite, SendsEveryByte) {
     EXPECT_EQ(*result.bytes, "hello");
 }
 
-// Nothing to send is success, and must not reach send(), where a zero count would
-// leave the loop with no progress to make.
+// Nothing to send is success, and must not reach send(), where a zero count would leave the loop with no progress to
+// make.
 TEST(SocketWrite, SucceedsWithoutSendingAnythingWhenGivenNoBytes) {
     auto [reader, writer] = connected_pair();
 
@@ -324,8 +321,8 @@ TEST(SocketWrite, SucceedsWithoutSendingAnythingWhenGivenNoBytes) {
     EXPECT_EQ(errno, EAGAIN);
 }
 
-// The MSG_NOSIGNAL test. Without that flag this does not fail: SIGPIPE kills the
-// whole process, which is how a server dies when one client hangs up early.
+// The MSG_NOSIGNAL test. Without that flag this does not fail: SIGPIPE kills the whole process, which is how a server
+// dies when one client hangs up early.
 TEST(SocketWrite, ReportsBrokenPipeWhenThePeerIsGone) {
     auto [reader, writer] = connected_pair();
     reader = Socket{-1};
@@ -346,8 +343,8 @@ TEST(SocketWrite, ReportsTheErrnoWhenTheDescriptorIsInvalid) {
     EXPECT_EQ(result.os_error, EBADF);
 }
 
-// More than the socket buffer holds, so the call cannot complete until the far end
-// is drained. Every byte must still arrive, exactly once and in order.
+// More than the socket buffer holds, so the call cannot complete until the far end is drained. Every byte must still
+// arrive, exactly once and in order.
 TEST(SocketWrite, SendsMoreThanTheSocketBufferHolds) {
     auto pair = connected_pair();
     Socket& reader = pair.first;
@@ -356,8 +353,7 @@ TEST(SocketWrite, SendsMoreThanTheSocketBufferHolds) {
     const std::string payload = pattern(1U << 20);
 
     std::string received;
-    std::thread sink(
-        [&reader, &received, size = payload.size()] { received = drain(reader, size); });
+    std::thread sink([&reader, &received, size = payload.size()] { received = drain(reader, size); });
 
     const auto result = writer.write(payload);
     sink.join();
@@ -367,9 +363,8 @@ TEST(SocketWrite, SendsMoreThanTheSocketBufferHolds) {
     EXPECT_EQ(received, payload);
 }
 
-// A signal landing after send has already moved bytes comes back as a short count,
-// not EINTR, so this is the resume path rather than the retry one. Resuming from
-// the wrong offset would put a prefix on the wire twice.
+// A signal landing after send has already moved bytes comes back as a short count, not EINTR, so this is the resume
+// path rather than the retry one. Resuming from the wrong offset would put a prefix on the wire twice.
 TEST(SocketWrite, ResumesFromWhereASignalStoppedIt) {
     auto pair = connected_pair();
     Socket& reader = pair.first;
@@ -399,8 +394,8 @@ TEST(SocketWrite, ResumesFromWhereASignalStoppedIt) {
     EXPECT_EQ(received, payload);
 }
 
-// EINTR is only reachable when the signal beats the first byte out, so the buffer
-// is stuffed full first and the write has nowhere to put even one.
+// EINTR is only reachable when the signal beats the first byte out, so the buffer is stuffed full first and the write
+// has nowhere to put even one.
 TEST(SocketWrite, RetriesWhenASignalArrivesBeforeAnyByteMoves) {
     auto pair = connected_pair();
     Socket& reader = pair.first;

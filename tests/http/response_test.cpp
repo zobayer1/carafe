@@ -11,12 +11,10 @@ namespace {
 using carafe::http::Response;
 using carafe::http::status_message;
 
-// How many times a field appears, which is the only way to catch a header that
-// is written twice with different values.
+// How many times a field appears, which is the only way to catch a header that is written twice with different values.
 std::size_t count_of(std::string_view text, std::string_view needle) {
     std::size_t found = 0;
-    for (auto at = text.find(needle); at != std::string_view::npos;
-         at = text.find(needle, at + needle.size())) {
+    for (auto at = text.find(needle); at != std::string_view::npos; at = text.find(needle, at + needle.size())) {
         ++found;
     }
     return found;
@@ -45,9 +43,8 @@ TEST(Response, StatusLineCarriesTheCodeAndItsPhrase) {
     EXPECT_EQ(head_of(response.serialize()).substr(0, 24), "HTTP/1.1 400 Bad Request");
 }
 
-// The space after the code belongs to the status line, not to the phrase, so a
-// code with no phrase still has to produce it. Concatenating a leading space
-// onto the phrase instead would malform exactly the lines nobody tests.
+// The space after the code belongs to the status line, not to the phrase, so a code with no phrase still has to produce
+// it. Concatenating a leading space onto the phrase instead would malform exactly the lines nobody tests.
 TEST(Response, UnknownStatusKeepsTheSpaceAndDropsThePhrase) {
     Response response;
     response.status = 418;
@@ -66,8 +63,8 @@ TEST(Response, ContentLengthIsTheBodySize) {
     EXPECT_EQ(body_of(wire), "twelve bytes");
 }
 
-// Counted in bytes rather than characters: a length in anything else leaves the
-// client waiting for bytes that never arrive.
+// Counted in bytes rather than characters: a length in anything else leaves the client waiting for bytes that never
+// arrive.
 TEST(Response, ContentLengthCountsBytesNotCharacters) {
     Response response;
     response.body = "\xc3\xa9\xc3\xa9";  // two characters, four bytes
@@ -85,8 +82,7 @@ TEST(Response, HeadersComeOutInInsertionOrder) {
     EXPECT_LT(wire.find("x-first: 1"), wire.find("x-second: 2"));
 }
 
-// A repeated field is legal and its order is meaningful, so serialize must not
-// collapse the two into one.
+// A repeated field is legal and its order is meaningful, so serialize must not collapse the two into one.
 TEST(Response, RepeatedFieldsAreBothWritten) {
     Response response;
     response.headers.add({"set-cookie", "a=1"});
@@ -98,8 +94,8 @@ TEST(Response, RepeatedFieldsAreBothWritten) {
     EXPECT_NE(wire.find("set-cookie: b=2\r\n"), std::string::npos);
 }
 
-// Two content-lengths is worse than a wrong one: the client picks whichever it
-// sees first, so the two ends disagree about where the body ends.
+// Two content-lengths is worse than a wrong one: the client picks whichever it sees first, so the two ends disagree
+// about where the body ends.
 TEST(Response, CallerContentLengthIsReplacedRatherThanRepeated) {
     Response response;
     response.headers.add({"content-length", "999"});
@@ -112,8 +108,8 @@ TEST(Response, CallerContentLengthIsReplacedRatherThanRepeated) {
     EXPECT_EQ(wire.find("999"), std::string::npos);
 }
 
-// Headers lowercases on the way in, and that is what reaches the wire: the
-// property the serve tests' spellings depend on.
+// Headers lowercases on the way in, and that is what reaches the wire: the property the serve tests' spellings depend
+// on.
 TEST(Response, FieldNamesReachTheWireLowercased) {
     Response response;
     response.headers.add({"Content-Type", "text/plain"});
@@ -121,8 +117,8 @@ TEST(Response, FieldNamesReachTheWireLowercased) {
     EXPECT_NE(response.serialize().find("\r\ncontent-type: text/plain\r\n"), std::string::npos);
 }
 
-// The point of the flag: same head, no body. A HEAD answer that recomputed its
-// length from what it sent would claim zero, which is the classic bug.
+// The point of the flag: same head, no body. A HEAD answer that recomputed its length from what it sent would claim
+// zero, which is the classic bug.
 TEST(Response, WithoutBodyWritesTheSameHeadAndStopsAtTheBlankLine) {
     Response response;
     response.headers.add({"content-type", "text/plain"});
@@ -142,8 +138,8 @@ TEST(Response, BodyIsWrittenExactlyAndNothingFollowsIt) {
 
     const std::string wire = response.serialize();
 
-    // The body has a blank line of its own, so nothing may treat the last one as
-    // the boundary: the head ends at the first.
+    // The body has a blank line of its own, so nothing may treat the last one as the boundary: the head ends at the
+    // first.
     EXPECT_EQ(body_of(wire), "line\r\n\r\nstill body");
     EXPECT_EQ(wire.size(), head_of(wire).size() + response.body.size());
 }
@@ -159,8 +155,8 @@ TEST(StatusMessage, NamesEveryStatusCarafeSends) {
     EXPECT_EQ(status_message(505), "HTTP Version Not Supported");
 }
 
-// Empty rather than a guess, so a handler may answer with a code carafe has
-// never heard of and still produce a well-formed status line.
+// Empty rather than a guess, so a handler may answer with a code carafe has never heard of and still produce a
+// well-formed status line.
 TEST(StatusMessage, IsEmptyForACodeItDoesNotKnow) {
     EXPECT_TRUE(status_message(0).empty());
     EXPECT_TRUE(status_message(418).empty());

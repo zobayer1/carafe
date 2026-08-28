@@ -25,12 +25,12 @@ struct RequestLineResult {
     }
 };
 
-// Parses "method SP request-target SP HTTP-version". `line` must arrive with its
-// CRLF removed and length-capped by the caller; capping here would be too late.
+// Parses "method SP request-target SP HTTP-version". `line` must arrive with its CRLF removed and length-capped by the
+// caller; capping here would be too late.
 [[nodiscard]] RequestLineResult parse_request_line(std::string_view line);
 
-// Parses "field-name ':' OWS field-value OWS". `line` must arrive with its
-// CRLF removed and length-capped by the caller; capping here would be too late.
+// Parses "field-name ':' OWS field-value OWS". `line` must arrive with its CRLF removed and length-capped by the
+// caller; capping here would be too late.
 [[nodiscard]] std::optional<HeaderField> parse_header_field(std::string_view line);
 
 }  // namespace carafe::http

@@ -15,8 +15,8 @@ namespace carafe::net {
 
 AcceptResult Listener::accept() {
     while (true) {
-        // accept4, not accept: flags are not inherited, so accept() would hand back a
-        // client without CLOEXEC however the listener was made.
+        // accept4, not accept: flags are not inherited, so accept() would hand back a client without CLOEXEC however
+        // the listener was made.
         const int client_fd = ::accept4(socket_.get(), nullptr, nullptr, SOCK_CLOEXEC);
 
         if (client_fd != -1) {
@@ -31,15 +31,14 @@ AcceptResult Listener::accept() {
 }
 
 ListenResult listen_on(std::uint16_t port) {
-    // CLOEXEC in the type argument, not fcntl afterwards: nothing a concurrent
-    // fork can copy in between.
+    // CLOEXEC in the type argument, not fcntl afterwards: nothing a concurrent fork can copy in between.
     const int raw_fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (raw_fd == -1) {
         return {ListenError::SocketFailed, errno, std::nullopt};
     }
 
-    // Owned from here on, so every return below closes it. Each reads errno into the
-    // result first, before that close can overwrite it.
+    // Owned from here on, so every return below closes it. Each reads errno into the result first, before that close
+    // can overwrite it.
     Socket sock(raw_fd);
 
     // Ignored: losing SO_REUSEADDR costs a slow restart, not correctness.

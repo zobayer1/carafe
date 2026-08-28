@@ -16,8 +16,7 @@ extern "C" inline void count_alarm(int /*signal*/) {
     alarms_delivered = alarms_delivered + 1;
 }
 
-// A thread created while SIGALRM is blocked inherits that, so only this one is
-// ever interrupted.
+// A thread created while SIGALRM is blocked inherits that, so only this one is ever interrupted.
 inline void mask_alarm(int how) {
     sigset_t alarm_only;
     sigemptyset(&alarm_only);
@@ -25,8 +24,8 @@ inline void mask_alarm(int how) {
     EXPECT_EQ(pthread_sigmask(how, &alarm_only, nullptr), 0);
 }
 
-// One-shot SIGALRM, handler and timer restored on the way out. No SA_RESTART, so
-// the kernel hands the interrupted call back as EINTR instead of resuming it.
+// One-shot SIGALRM, handler and timer restored on the way out. No SA_RESTART, so the kernel hands the interrupted call
+// back as EINTR instead of resuming it.
 class AlarmIn {
 public:
     explicit AlarmIn(suseconds_t micros) {

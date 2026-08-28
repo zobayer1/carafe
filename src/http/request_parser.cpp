@@ -19,16 +19,15 @@ namespace {
 
 // nullopt is a verb we do not implement, not a malformed token.
 [[nodiscard]] std::optional<Method> lookup_method(std::string_view token) noexcept {
-    static constexpr std::array<std::pair<std::string_view, Method>, 9> table{
-        {{"GET", Method::Get},
-         {"HEAD", Method::Head},
-         {"POST", Method::Post},
-         {"PUT", Method::Put},
-         {"DELETE", Method::Delete},
-         {"CONNECT", Method::Connect},
-         {"OPTIONS", Method::Options},
-         {"TRACE", Method::Trace},
-         {"PATCH", Method::Patch}}};
+    static constexpr std::array<std::pair<std::string_view, Method>, 9> table{{{"GET", Method::Get},
+                                                                               {"HEAD", Method::Head},
+                                                                               {"POST", Method::Post},
+                                                                               {"PUT", Method::Put},
+                                                                               {"DELETE", Method::Delete},
+                                                                               {"CONNECT", Method::Connect},
+                                                                               {"OPTIONS", Method::Options},
+                                                                               {"TRACE", Method::Trace},
+                                                                               {"PATCH", Method::Patch}}};
 
     for (const auto& [name, method] : table) {
         if (token == name) {
@@ -38,8 +37,7 @@ namespace {
     return std::nullopt;
 }
 
-// Shape before value: a table alone cannot tell "not a version" (400) from "a
-// version we do not speak" (505).
+// Shape before value: a table alone cannot tell "not a version" (400) from "a version we do not speak" (505).
 [[nodiscard]] ParseError parse_version(std::string_view token, Version& out) noexcept {
     if (token.size() != 8 || token.substr(0, 5) != "HTTP/" || token[6] != '.' ||
         std::isdigit(static_cast<unsigned char>(token[5])) == 0 ||
@@ -60,9 +58,8 @@ namespace {
     return ParseError::UnsupportedVersion;
 }
 
-// RFC 9112 2.2: a surviving bare CR lets a proxy and this server disagree about
-// where the line ends. Rejecting all CTLs also covers LF, NUL, and tab; SP is
-// not a CTL, so this is independent of the field split.
+// RFC 9112 2.2: a surviving bare CR lets a proxy and this server disagree about where the line ends. Rejecting all CTLs
+// also covers LF, NUL, and tab; SP is not a CTL, so this is independent of the field split.
 [[nodiscard]] bool contains_ctl(std::string_view text) noexcept {
     for (const char ch : text) {
         const auto u_ch = static_cast<unsigned char>(ch);
@@ -73,14 +70,13 @@ namespace {
     return false;
 }
 
-// RFC 3986 §2.1: pct-encoded = "%" HEXDIG HEXDIG. Both hex cases are accepted
-// because §6.2.2.1 makes them equivalent.
+// RFC 3986 §2.1: pct-encoded = "%" HEXDIG HEXDIG. Both hex cases are accepted because §6.2.2.1 makes them equivalent.
 [[nodiscard]] constexpr bool is_hex_digit(unsigned char ch) noexcept {
     return (ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'F') || (ch >= 'a' && ch <= 'f');
 }
 
-// RFC 9110 §5.6.2: tchar = ALPHA / DIGIT / "!" / "#" / "$" / "%" / "&" /
-// "'" / "*" / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~"
+// RFC 9110 §5.6.2: tchar = ALPHA / DIGIT / "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "." / "^" / "_" / "`"
+// / "|" / "~"
 [[nodiscard]] constexpr bool is_tchar(unsigned char ch) noexcept {
     if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) {
         return true;
@@ -112,23 +108,22 @@ namespace {
     return ch == ' ' || ch == '\t';
 }
 
-// RFC 9110 §5.5: field-vchar = VCHAR / obs-text, with SP and HTAB between them.
-// An allowlist, so a control byte nobody thought to name still fails.
+// RFC 9110 §5.5: field-vchar = VCHAR / obs-text, with SP and HTAB between them. An allowlist, so a control byte nobody
+// thought to name still fails.
 [[nodiscard]] constexpr bool is_valid_value_char(unsigned char ch) noexcept {
     return ch == '\t' || (ch >= 0x20 && ch != 0x7F);
 }
 
-// A bare '%' is not a byte a URI may carry, so there is no lenient reading to fall
-// back to. Rejecting the target keeps the router's decoder from ever meeting an
-// escape that does not decode. Router::find copes anyway, since no type says a
-// target came through here.
+// A bare '%' is not a byte a URI may carry, so there is no lenient reading to fall back to. Rejecting the target keeps
+// the router's decoder from ever meeting an escape that does not decode. Router::find copes anyway, since no type says
+// a target came through here.
 [[nodiscard]] bool has_valid_escapes(std::string_view target) noexcept {
     for (std::size_t i = 0; i < target.size(); ++i) {
         if (target[i] != '%') {
             continue;
         }
-        // The size test guards both indexings: string_view does not bounds check, so
-        // a '%' in the last two bytes would read past the end.
+        // The size test guards both indexings: string_view does not bounds check, so a '%' in the last two bytes would
+        // read past the end.
         if (i + 2 >= target.size() || !is_hex_digit(static_cast<unsigned char>(target[i + 1])) ||
             !is_hex_digit(static_cast<unsigned char>(target[i + 2]))) {
             return false;
@@ -174,8 +169,8 @@ RequestLineResult parse_request_line(std::string_view line) {
         return {err, {}};
     }
 
-    // Ahead of the method lookup: 501 promises a request we could read carrying a
-    // verb we do not implement, and a target we cannot read breaks that promise.
+    // Ahead of the method lookup: 501 promises a request we could read carrying a verb we do not implement, and a
+    // target we cannot read breaks that promise.
     if (!has_valid_escapes(target_part)) {
         return {ParseError::Malformed, {}};
     }

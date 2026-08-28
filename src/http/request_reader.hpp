@@ -29,12 +29,12 @@ struct RequestResult {
     RequestError error = RequestError::None;
     std::optional<Request> request;
 
-    // False when the reader cannot find where the next request begins, which is
-    // every failure but a body it is willing to read and drop.
+    // False when the reader cannot find where the next request begins, which is every failure but a body it is willing
+    // to read and drop.
     bool stream_continues = true;
 
-    // The version the failed request declared. RFC 9112 §9.3 leaves an HTTP/1.0
-    // client waiting for a close, and a failure carries no Request to read it from.
+    // The version the failed request declared. RFC 9112 §9.3 leaves an HTTP/1.0 client waiting for a close, and a
+    // failure carries no Request to read it from.
     Version version{};
 
     [[nodiscard]] explicit operator bool() const noexcept {
@@ -42,14 +42,14 @@ struct RequestResult {
     }
 };
 
-// Turns a byte stream into successive request heads. One per connection, not
-// one per request: completion arms the next, so a pipelined stream just works.
+// Turns a byte stream into successive request heads. One per connection, not one per request: completion arms the next,
+// so a pipelined stream just works.
 class RequestReader {
 public:
     void append(std::string_view bytes);
 
-    // Drains every line available, so a caller does not loop. Unlike
-    // LineReader, nothing here is a view: a Request owns all of its strings.
+    // Drains every line available, so a caller does not loop. Unlike LineReader, nothing here is a view: a Request owns
+    // all of its strings.
     [[nodiscard]] RequestResult next_request();
 
 private:
@@ -58,12 +58,12 @@ private:
     // Loses the stream: the failure latches and every later call repeats it.
     [[nodiscard]] RequestResult fail(RequestError error);
 
-    // Answerable and read past: the failure is reported once, the declared body is
-    // dropped, and the next request is parsed as usual.
+    // Answerable and read past: the failure is reported once, the declared body is dropped, and the next request is
+    // parsed as usual.
     [[nodiscard]] RequestResult refuse(RequestError error);
 
-    // Clears the per-request state, and so is called wherever the next request's
-    // first byte is known: a completed request, or a refused body fully drained.
+    // Clears the per-request state, and so is called wherever the next request's first byte is known: a completed
+    // request, or a refused body fully drained.
     void arm_next_request();
 
     // Hands the assembled request over and arms the next one.
@@ -73,8 +73,8 @@ private:
     [[nodiscard]] std::optional<RequestResult> handle_request_line(std::string_view line);
     [[nodiscard]] std::optional<RequestResult> handle_field_line(std::string_view line);
 
-    // Validates the assembled head and decides what follows it: a request to hand
-    // over, a failure, or a body still to be read.
+    // Validates the assembled head and decides what follows it: a request to hand over, a failure, or a body still to
+    // be read.
     [[nodiscard]] std::optional<RequestResult> complete_head();
 
     Phase phase_ = Phase::RequestLine;

@@ -18,8 +18,7 @@ namespace carafe::server {
 
 namespace {
 
-// No default label, so a new enumerator breaks this build rather than becoming a
-// silent 400.
+// No default label, so a new enumerator breaks this build rather than becoming a silent 400.
 int status_for(http::RequestError error) {
     switch (error) {
         case http::RequestError::UnknownMethod:
@@ -42,11 +41,9 @@ int status_for(http::RequestError error) {
     return 400;
 }
 
-// RFC 9110 §7.6.1: a comma-separated list of case-insensitive connection options.
-// §5.3 folds a repeated field into one list, so every connection field is scanned
-// and not just the first. `option` must already be lowercase.
-[[nodiscard]] bool has_connection_option(const http::Headers& headers,
-                                         std::string_view option) noexcept {
+// RFC 9110 §7.6.1: a comma-separated list of case-insensitive connection options. §5.3 folds a repeated field into one
+// list, so every connection field is scanned and not just the first. `option` must already be lowercase.
+[[nodiscard]] bool has_connection_option(const http::Headers& headers, std::string_view option) noexcept {
     for (const auto& header : headers) {
         // Stored lowercased by Headers::add, so a plain compare is enough.
         if (header.name != "connection") {
@@ -61,8 +58,7 @@ int status_for(http::RequestError error) {
             }
             std::string_view token = value.substr(start, end - start);
 
-            // RFC 9110 §5.6.1: OWS around a list element is not part of it, and
-            // §5.6.3 makes that SP or HTAB alone.
+            // RFC 9110 §5.6.1: OWS around a list element is not part of it, and §5.6.3 makes that SP or HTAB alone.
             while (!token.empty() && (token.front() == ' ' || token.front() == '\t')) {
                 token.remove_prefix(1);
             }
@@ -79,15 +75,14 @@ int status_for(http::RequestError error) {
     return false;
 }
 
-// RFC 9112 §9.3: persistent by default on HTTP/1.1, and not on HTTP/1.0 unless the
-// client asks. "close" is definitive either way, so it is tested first.
+// RFC 9112 §9.3: persistent by default on HTTP/1.1, and not on HTTP/1.0 unless the client asks. "close" is definitive
+// either way, so it is tested first.
 [[nodiscard]] bool client_wants_close(const http::Request& request) noexcept {
     if (has_connection_option(request.headers, "close")) {
         return true;
     }
 
-    // No default: a new version states its own persistence rather than inheriting
-    // 1.1's.
+    // No default: a new version states its own persistence rather than inheriting 1.1's.
     switch (request.version) {
         case http::Version::Http10:
             return !has_connection_option(request.headers, "keep-alive");
@@ -97,9 +92,8 @@ int status_for(http::RequestError error) {
     return false;
 }
 
-// Sends one response and reports whether the connection outlives it. The close is
-// announced before it is performed, RFC 9112 §9.6, or a client cannot tell a
-// deliberate end from a truncated reply.
+// Sends one response and reports whether the connection outlives it. The close is announced before it is performed,
+// RFC 9112 §9.6, or a client cannot tell a deliberate end from a truncated reply.
 [[nodiscard]] bool answer(Connection& conn, http::Response response, bool closing, bool with_body) {
     if (closing) {
         response.headers.add({"connection", "close"});
@@ -119,8 +113,8 @@ http::Response status_response(int status) {
     return http::text_response(status, std::move(body));
 }
 
-// Comma-separated, as RFC 9110 spells the field. Method names are case-sensitive
-// tokens, so these stay uppercase though every field name we emit is lowered.
+// Comma-separated, as RFC 9110 spells the field. Method names are case-sensitive tokens, so these stay uppercase though
+// every field name we emit is lowered.
 std::string allow_value(const std::vector<http::Method>& methods) {
     std::string value;
     for (const http::Method method : methods) {
@@ -132,10 +126,9 @@ std::string allow_value(const std::vector<http::Method>& methods) {
     return value;
 }
 
-// A path nobody registered is a 404; one registered under another method is a
-// 405, and RFC 9110 makes Allow on that 405 a MUST rather than a courtesy.
-http::Response unmatched_response(const Router& router, std::string_view target,
-                                  bool path_matched) {
+// A path nobody registered is a 404; one registered under another method is a 405, and RFC 9110 makes Allow on that 405
+// a MUST rather than a courtesy.
+http::Response unmatched_response(const Router& router, std::string_view target, bool path_matched) {
     if (!path_matched) {
         return status_response(404);
     }
@@ -158,11 +151,9 @@ void serve_connection(Connection& conn, const Router& router) {
 
             http::Response response = status_response(status_for(result.error));
 
-            // Two reasons to close, and a failure carries no headers to consult: a
-            // 1.0 client that did ask to stay open is closed on anyway. Legal, and
-            // the other way round leaves one that did not ask waiting forever.
-            if (!answer(conn, std::move(response),
-                        !result.stream_continues || result.version == http::Version::Http10,
+            // Two reasons to close, and a failure carries no headers to consult: a 1.0 client that did ask to stay open
+            // is closed on anyway. Legal, and the other way round leaves one that did not ask waiting forever.
+            if (!answer(conn, std::move(response), !result.stream_continues || result.version == http::Version::Http10,
                         true)) {
                 return;
             }
@@ -177,16 +168,13 @@ void serve_connection(Connection& conn, const Router& router) {
         http::Request& request = *result.request;
         auto match = router.find(request.method, request.target);
 
-        // Unconditional: an unmatched request captured nothing, so this costs an
-        // empty vector rather than a branch.
+        // Unconditional: an unmatched request captured nothing, so this costs an empty vector rather than a branch.
         request.params = std::move(match.params);
 
         http::Response response =
-            match ? (*match.handler)(request)
-                  : unmatched_response(router, request.target, match.path_matched);
+            match ? (*match.handler)(request) : unmatched_response(router, request.target, match.path_matched);
 
-        if (!answer(conn, std::move(response), client_wants_close(request),
-                    request.method != http::Method::Head)) {
+        if (!answer(conn, std::move(response), client_wants_close(request), request.method != http::Method::Head)) {
             return;
         }
     }

@@ -11,8 +11,8 @@ using carafe::http::Method;
 using carafe::http::Request;
 using carafe::http::text_response;
 
-// Registration is all that can be observed here: App exposes no way to look a
-// route up, and run() never returns. The bool is the whole contract.
+// Registration is all that can be observed here: App exposes no way to look a route up, and run() never returns. The
+// bool is the whole contract.
 carafe::http::Handler noop() {
     return [](const Request&) { return text_response(200, ""); };
 }
@@ -34,10 +34,9 @@ TEST(App, RegistersTheMethodsThatHaveNamedHelpers) {
     EXPECT_TRUE(app.route(Method::Delete, "/e", noop()));
 }
 
-// HEAD is answered by the Get fallback, whose headers a hand-written route would
-// have to reproduce; a CONNECT target is an authority rather than a path, so such
-// a route could never match. Neither has a named helper, and route() is the only
-// other way in.
+// HEAD is answered by the Get fallback, whose headers a hand-written route would have to reproduce; a CONNECT target is
+// an authority rather than a path, so such a route could never match. Neither has a named helper, and route() is the
+// only other way in.
 TEST(App, RefusesTheMethodsItCannotHonour) {
     App app;
     EXPECT_FALSE(app.route(Method::Head, "/a", noop()));

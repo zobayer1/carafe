@@ -15,8 +15,7 @@ using carafe::http::ParseError;
 using carafe::http::Version;
 
 // Asserts `line` parses and that all three fields match.
-void expect_request_line(std::string_view line, Method method, std::string_view target,
-                         Version version) {
+void expect_request_line(std::string_view line, Method method, std::string_view target, Version version) {
     SCOPED_TRACE(line);
     const auto result = parse_request_line(line);
     ASSERT_TRUE(result) << "unexpected error: " << result.error;
@@ -70,8 +69,7 @@ TEST(ParseRequestLine, ParsesEveryMethod) {
     expect_request_line("POST /a HTTP/1.1", Method::Post, "/a", Version::Http11);
     expect_request_line("PUT /a HTTP/1.1", Method::Put, "/a", Version::Http11);
     expect_request_line("DELETE /a HTTP/1.1", Method::Delete, "/a", Version::Http11);
-    expect_request_line("CONNECT example.com:443 HTTP/1.1", Method::Connect, "example.com:443",
-                        Version::Http11);
+    expect_request_line("CONNECT example.com:443 HTTP/1.1", Method::Connect, "example.com:443", Version::Http11);
     expect_request_line("OPTIONS * HTTP/1.1", Method::Options, "*", Version::Http11);
     expect_request_line("TRACE /a HTTP/1.1", Method::Trace, "/a", Version::Http11);
     expect_request_line("PATCH /a HTTP/1.1", Method::Patch, "/a", Version::Http11);
@@ -98,8 +96,8 @@ TEST(ParseRequestLine, RejectsDoubleSpace) {
     expect_request_line_error("GET  /  HTTP/1.1", ParseError::Malformed);
 }
 
-// A bare CR survives a two-byte CRLF split, so it must not reach the target.
-// The NUL case needs the sized constructor; the const char* one truncates.
+// A bare CR survives a two-byte CRLF split, so it must not reach the target. The NUL case needs the sized constructor;
+// the const char* one truncates.
 TEST(ParseRequestLine, RejectsControlCharacters) {
     expect_request_line_error("GET /a\rHTTP/1.1 HTTP/1.1", ParseError::Malformed);
     expect_request_line_error("GET /a\r HTTP/1.1", ParseError::Malformed);
@@ -109,8 +107,8 @@ TEST(ParseRequestLine, RejectsControlCharacters) {
     expect_request_line_error(std::string_view("GET /a\0b HTTP/1.1", 17), ParseError::Malformed);
 }
 
-// Guards the unsigned char cast: as signed char, every byte above 0x7F reads
-// as a control byte and any non-ASCII target 400s.
+// Guards the unsigned char cast: as signed char, every byte above 0x7F reads as a control byte and any non-ASCII target
+// 400s.
 TEST(ParseRequestLine, AcceptsNonAsciiTarget) {
     expect_request_line("GET /caf\xC3\xA9 HTTP/1.1", Method::Get, "/caf\xC3\xA9", Version::Http11);
 }
@@ -150,9 +148,8 @@ TEST(ParseRequestLine, VersionErrorTakesPrecedenceOverMethodError) {
     expect_request_line_error("FROB / HTTP/9.9", ParseError::UnsupportedVersion);
 }
 
-// RFC 3986 2.1 admits no bare '%': each of these is a guess at what was meant.
-// The last two reach the bounds test, one with the '%' at the front of the
-// target and one with content ahead of it.
+// RFC 3986 2.1 admits no bare '%': each of these is a guess at what was meant. The last two reach the bounds test, one
+// with the '%' at the front of the target and one with content ahead of it.
 TEST(ParseRequestLine, RejectsMalformedPercentEscapes) {
     expect_request_line_error("GET /%zz HTTP/1.1", ParseError::Malformed);
     expect_request_line_error("GET /%2z HTTP/1.1", ParseError::Malformed);
@@ -163,9 +160,8 @@ TEST(ParseRequestLine, RejectsMalformedPercentEscapes) {
     expect_request_line_error("GET /a%2 HTTP/1.1", ParseError::Malformed);
 }
 
-// Hex is case-insensitive, and the scan resumes past a good escape rather than
-// re-reading its digits as the start of another. The query is checked too:
-// pct-encoded is a URI-wide production, not a path one.
+// Hex is case-insensitive, and the scan resumes past a good escape rather than re-reading its digits as the start of
+// another. The query is checked too: pct-encoded is a URI-wide production, not a path one.
 TEST(ParseRequestLine, AcceptsWellFormedPercentEscapes) {
     expect_request_line("GET /a%20b HTTP/1.1", Method::Get, "/a%20b", Version::Http11);
     expect_request_line("GET /%2F%2f HTTP/1.1", Method::Get, "/%2F%2f", Version::Http11);
@@ -173,16 +169,15 @@ TEST(ParseRequestLine, AcceptsWellFormedPercentEscapes) {
     expect_request_line("GET /a?x=%26 HTTP/1.1", Method::Get, "/a?x=%26", Version::Http11);
 }
 
-// The target is tested after the version and before the method, so a bad one
-// loses to a protocol we do not speak and beats a verb we do not implement.
+// The target is tested after the version and before the method, so a bad one loses to a protocol we do not speak and
+// beats a verb we do not implement.
 TEST(ParseRequestLine, TargetErrorLosesToVersionAndBeatsMethod) {
     expect_request_line_error("GET /%zz HTTP/9.9", ParseError::UnsupportedVersion);
     expect_request_line_error("FROB /%zz HTTP/1.1", ParseError::Malformed);
 }
 
-// A known gap, not a decision: escapes are validated, but the target is still
-// not checked against any of the four request-target forms RFC 9112 3.2 gives.
-// Expected to fail the day origin-form and absolute-form are told apart.
+// A known gap, not a decision: escapes are validated, but the target is still not checked against any of the four
+// request-target forms RFC 9112 3.2 gives. Expected to fail the day origin-form and absolute-form are told apart.
 TEST(ParseRequestLine, AcceptsAnyNonEmptyTargetForNow) {
     expect_request_line("GET foo HTTP/1.1", Method::Get, "foo", Version::Http11);
 }
@@ -199,14 +194,13 @@ TEST(ParseHeaderField, AcceptsEveryTokenCharacterClassInTheName) {
     expect_header_field("!#$%&'*+-.^_`|~:v", "!#$%&'*+-.^_`|~", "v");
 }
 
-// Values are not case-insensitive: tokens, base64 and URLs all carry meaning in
-// their casing.
+// Values are not case-insensitive: tokens, base64 and URLs all carry meaning in their casing.
 TEST(ParseHeaderField, PreservesValueCase) {
     expect_header_field("Host:XA", "host", "XA");
 }
 
-// OWS around the value is optional, and it is SP or HTAB. A trim written against
-// ' ' alone passes the first of these and fails the second.
+// OWS around the value is optional, and it is SP or HTAB. A trim written against ' ' alone passes the first of these
+// and fails the second.
 TEST(ParseHeaderField, TrimsOptionalWhitespaceAroundTheValue) {
     expect_header_field("Host:   xs", "host", "xs");
     expect_header_field("X-Tab:\t x \t", "x-tab", "x");
@@ -217,8 +211,8 @@ TEST(ParseHeaderField, KeepsWhitespaceInsideTheValue) {
     expect_header_field("X-Tab:   a\tb", "x-tab", "a\tb");
 }
 
-// field-value is *field-content, so an empty value is legal syntax. An empty
-// Host is invalid, but that is the assembler's rule, not this layer's.
+// field-value is *field-content, so an empty value is legal syntax. An empty Host is invalid, but that is the
+// assembler's rule, not this layer's.
 TEST(ParseHeaderField, AcceptsEmptyValue) {
     expect_header_field("X-Empty:", "x-empty", "");
     expect_header_field("X-Empty:   ", "x-empty", "");
@@ -229,8 +223,8 @@ TEST(ParseHeaderField, SplitsOnTheFirstColonOnly) {
     expect_header_field("Host:example.com:8080", "host", "example.com:8080");
 }
 
-// obs-text is opaque data, not an error. Also the case that catches a signed
-// char comparison mistaking 0x80 for a control byte.
+// obs-text is opaque data, not an error. Also the case that catches a signed char comparison mistaking 0x80 for a
+// control byte.
 TEST(ParseHeaderField, AcceptsObsTextInValue) {
     expect_header_field("X-Obs:\x80\xFF", "x-obs", "\x80\xFF");
 }
@@ -245,14 +239,14 @@ TEST(ParseHeaderField, RejectsEmptyName) {
     expect_header_field_rejected(":x");
 }
 
-// RFC 9112 §5.1 requires rejecting rather than trimming: a proxy that trims and
-// a server that does not would disagree about the field name.
+// RFC 9112 §5.1 requires rejecting rather than trimming: a proxy that trims and a server that does not would disagree
+// about the field name.
 TEST(ParseHeaderField, RejectsSpaceBeforeTheColon) {
     expect_header_field_rejected("Host : x");
 }
 
-// A line opening with OWS is an obs-fold continuation, deprecated by RFC 9112
-// §5.2. Parsed as a field it would yield a nonsense name.
+// A line opening with OWS is an obs-fold continuation, deprecated by RFC 9112 §5.2. Parsed as a field it would yield a
+// nonsense name.
 TEST(ParseHeaderField, RejectsObsFoldContinuation) {
     expect_header_field_rejected(" Host: x");
     expect_header_field_rejected("\tHost: x");
@@ -264,8 +258,8 @@ TEST(ParseHeaderField, RejectsNonTokenCharactersInName) {
     expect_header_field_rejected("Host(x): y");
 }
 
-// CR, LF and DEL are invalid in a value. LineReader makes the first two
-// unreachable, but this layer does not lean on that.
+// CR, LF and DEL are invalid in a value. LineReader makes the first two unreachable, but this layer does not lean on
+// that.
 TEST(ParseHeaderField, RejectsControlCharactersInValue) {
     expect_header_field_rejected("Host: a\rb");
     expect_header_field_rejected("Host: a\nb");
@@ -274,8 +268,8 @@ TEST(ParseHeaderField, RejectsControlCharactersInValue) {
         "b");
 }
 
-// The legal set is HTAB, 0x20-0x7E and obs-text, so anything else below 0x20 is
-// out. A denylist naming only CR, LF and DEL would let all of these through.
+// The legal set is HTAB, 0x20-0x7E and obs-text, so anything else below 0x20 is out. A denylist naming only CR, LF and
+// DEL would let all of these through.
 TEST(ParseHeaderField, RejectsOtherControlCharactersInValue) {
     expect_header_field_rejected(std::string_view("Host: a\0b", 9));
     expect_header_field_rejected(
@@ -289,8 +283,8 @@ TEST(ParseHeaderField, RejectsOtherControlCharactersInValue) {
         "b");
 }
 
-// A NUL anywhere in the name is not a tchar either; the sized constructor is
-// what gets it past strlen and into the parser at all.
+// A NUL anywhere in the name is not a tchar either; the sized constructor is what gets it past strlen and into the
+// parser at all.
 TEST(ParseHeaderField, RejectsNulInName) {
     expect_header_field_rejected(std::string_view("Ho\0st: x", 8));
 }

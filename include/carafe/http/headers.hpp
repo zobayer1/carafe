@@ -13,24 +13,20 @@ struct HeaderField {
     std::string value;  // OWS-trimmed
 };
 
-// Field order is preserved: repeated fields are legal, and reserialising depends
-// on the order they arrived in.
+// Field order is preserved: repeated fields are legal, and reserialising depends on the order they arrived in.
 class Headers {
 public:
     using const_iterator = std::vector<HeaderField>::const_iterator;
 
-    // Lowercases the name, so callers cannot break lookup. Invalidates every view
-    // from get(): the vector reallocates.
+    // Lowercases the name, so callers cannot break lookup. Invalidates every view from get(): the vector reallocates.
     void add(HeaderField field);
 
-    // First value under `name`, which may repeat. Case-insensitive, and valid
-    // while this Headers is unmodified.
+    // First value under `name`, which may repeat. Case-insensitive, and valid while this Headers is unmodified.
     [[nodiscard]] std::optional<std::string_view> get(std::string_view name) const noexcept;
 
     [[nodiscard]] bool contains(std::string_view name) const noexcept;
 
-    // What makes the singleton rules checkable: exactly one Host, no conflicting
-    // Content-Length.
+    // What makes the singleton rules checkable: exactly one Host, no conflicting Content-Length.
     [[nodiscard]] std::size_t count(std::string_view name) const noexcept;
 
     [[nodiscard]] std::size_t size() const noexcept {

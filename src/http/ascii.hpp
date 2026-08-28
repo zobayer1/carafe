@@ -5,8 +5,8 @@
 
 namespace carafe::http {
 
-// HTTP case-insensitivity is ASCII-only, so std::tolower is wrong here: it is
-// locale-dependent, and in a Turkish locale 'I' does not lower to 'i'.
+// HTTP case-insensitivity is ASCII-only, so std::tolower is wrong here: it is locale-dependent, and in a Turkish locale
+// 'I' does not lower to 'i'.
 [[nodiscard]] constexpr char ascii_lower(char ch) noexcept {
     const auto u_ch = static_cast<unsigned char>(ch);
     if (u_ch >= 'A' && u_ch <= 'Z') {
@@ -15,10 +15,9 @@ namespace carafe::http {
     return ch;
 }
 
-// Case-insensitive ASCII compare with the folding done once. `lowered` must
-// already be lowercase: a literal, or a name Headers::add folded on the way in.
-[[nodiscard]] constexpr bool ascii_equals_lowered(std::string_view lowered,
-                                                  std::string_view text) noexcept {
+// Case-insensitive ASCII compare with the folding done once. `lowered` must already be lowercase: a literal, or a name
+// Headers::add folded on the way in.
+[[nodiscard]] constexpr bool ascii_equals_lowered(std::string_view lowered, std::string_view text) noexcept {
     if (text.size() != lowered.size()) {
         return false;
     }

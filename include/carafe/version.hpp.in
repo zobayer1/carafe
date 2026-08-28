@@ -1,14 +1,13 @@
-// This file is a template. CMake expands the @VARIABLES@ and writes the result
-// to ${PROJECT_BINARY_DIR}/generated/carafe/version.hpp. Do not include this file
-// directly; include <carafe/version.hpp>.
+// This file is a template. CMake expands the @VARIABLES@ and writes the result to
+// ${PROJECT_BINARY_DIR}/generated/carafe/version.hpp. Do not include this file directly; include <carafe/version.hpp>.
 #pragma once
 
 #include <string_view>
 
 // These have to be macros: only the preprocessor can answer questions like
 //   #if CARAFE_VERSION_MAJOR >= 1
-// which is the whole point of a version header. clang-tidy would rather see
-// constants, so the checks are suppressed here and only here.
+// which is the whole point of a version header. clang-tidy would rather see constants, so the checks are suppressed
+// here and only here.
 // NOLINTBEGIN(cppcoreguidelines-macro-usage,cppcoreguidelines-macro-to-enum,modernize-macro-to-enum)
 #define CARAFE_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
 #define CARAFE_VERSION_MINOR @PROJECT_VERSION_MINOR@

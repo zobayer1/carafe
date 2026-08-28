@@ -11,8 +11,8 @@
 
 namespace carafe::net {
 
-// Linux releases the descriptor even when close() reports EINTR, so retrying
-// would close whatever another thread has since opened into the slot.
+// Linux releases the descriptor even when close() reports EINTR, so retrying would close whatever another thread has
+// since opened into the slot.
 Socket::~Socket() {
     if (fd_ != -1) {
         ::close(fd_);
@@ -32,8 +32,8 @@ Socket& Socket::operator=(Socket&& other) noexcept {
     return *this;
 }
 
-// Not const: a const Socket& reads as safe to share, and these bytes leave the
-// stream once taken. std::istream::read is non-const for the same reason.
+// Not const: a const Socket& reads as safe to share, and these bytes leave the stream once taken. std::istream::read is
+// non-const for the same reason.
 // NOLINTNEXTLINE(readability-make-member-function-const)
 ReadResult Socket::read(char* buffer, std::size_t size) {
     while (true) {

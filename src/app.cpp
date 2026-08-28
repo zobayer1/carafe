@@ -58,8 +58,8 @@ bool App::route(http::Method method, std::string_view path, http::Handler handle
 }
 
 bool App::run(std::uint16_t port) {
-    // The optional, not the result: both say the same thing, but only this spelling
-    // proves to the analyser that the deref below is safe.
+    // The optional, not the result: both say the same thing, but only this spelling proves to the analyser that the
+    // deref below is safe.
     net::ListenResult listen_result = net::listen_on(port);
     if (!listen_result.listener.has_value()) {
         return false;
@@ -70,16 +70,16 @@ bool App::run(std::uint16_t port) {
     while (true) {
         auto accepted = listener.accept();
         if (!accepted.client.has_value()) {
-            // A connection dying in the queue is routine. Anything else means the
-            // listener is finished, and retrying would spin hot on the same error.
+            // A connection dying in the queue is routine. Anything else means the listener is finished, and retrying
+            // would spin hot on the same error.
             if (accepted.os_error == ECONNABORTED) {
                 continue;
             }
             return false;
         }
 
-        // To completion before the next accept, closed when conn leaves scope: one
-        // client at a time until the concurrency milestone.
+        // To completion before the next accept, closed when conn leaves scope: one client at a time until the
+        // concurrency milestone.
         server::Connection conn{std::move(*accepted.client)};
         server::serve_connection(conn, *router_);
     }

@@ -13,12 +13,11 @@
 
 namespace carafe::http {
 
-// Request line plus every field line: the per-line cap bounds one field, this
-// bounds how many a client may stack up.
+// Request line plus every field line: the per-line cap bounds one field, this bounds how many a client may stack up.
 constexpr std::size_t max_head_bytes = 65536;
 
-// Bytes alone would admit thousands of tiny fields, whose vector and string
-// overhead costs far more than their bytes suggest.
+// Bytes alone would admit thousands of tiny fields, whose vector and string overhead costs far more than their bytes
+// suggest.
 constexpr std::size_t max_fields = 100;
 
 // Stripped by LineReader, but still bytes the client sent.
@@ -27,12 +26,12 @@ constexpr std::size_t crlf_size = 2;
 // No streaming yet, so a body is held whole in memory before a handler sees it.
 constexpr std::size_t max_body_bytes = 1048576;
 
-// Past this, reading a refused body and throwing it away costs more than the
-// connection is worth, so the refusal closes instead.
+// Past this, reading a refused body and throwing it away costs more than the connection is worth, so the refusal closes
+// instead.
 constexpr std::size_t max_drain_bytes = 8388608;
 
-// What lets the digit loop carry one bound instead of two: the cap is tested
-// after each digit, so the next multiply starts below it and cannot wrap.
+// What lets the digit loop carry one bound instead of two: the cap is tested after each digit, so the next multiply
+// starts below it and cannot wrap.
 static_assert(max_drain_bytes <= (std::numeric_limits<std::size_t>::max() - 9) / 10);
 
 namespace {
@@ -42,9 +41,8 @@ struct BodyLength {
     std::size_t bytes = 0;
 };
 
-// RFC 9112 §6.2: Content-Length = 1*DIGIT. The whole value, not a leading
-// number: reading "3, 3" as 3 frames the request the way only one of two
-// disagreeing recipients would.
+// RFC 9112 §6.2: Content-Length = 1*DIGIT. The whole value, not a leading number: reading "3, 3" as 3 frames the
+// request the way only one of two disagreeing recipients would.
 [[nodiscard]] BodyLength parse_content_length(std::string_view value) noexcept {
     if (value.empty()) {
         return {RequestError::Malformed, 0};
@@ -66,21 +64,20 @@ struct BodyLength {
 
 // RFC 9112 §6.3, minus the rules only a response can reach.
 [[nodiscard]] BodyLength measure_body(const Headers& headers) noexcept {
-    // §6.1: a coding we do not implement leaves us unable to say where the body
-    // ends, so there is nothing to read past and nothing to resume from.
+    // §6.1: a coding we do not implement leaves us unable to say where the body ends, so there is nothing to read past
+    // and nothing to resume from.
     if (headers.contains("transfer-encoding")) {
         return {RequestError::UnsupportedTransferEncoding, 0};
     }
 
-    // Refused even when the values agree: §5.3 makes this and "3, 3" the same
-    // request, and recipients resolving them differently is how one gets smuggled.
+    // Refused even when the values agree: §5.3 makes this and "3, 3" the same request, and recipients resolving them
+    // differently is how one gets smuggled.
     if (headers.count("content-length") > 1) {
         return {RequestError::Malformed, 0};
     }
     const auto value = headers.get("content-length");
 
-    // §6.3: no Content-Length on a request means no body. Running to end of
-    // stream is a response reading.
+    // §6.3: no Content-Length on a request means no body. Running to end of stream is a response reading.
     if (!value.has_value()) {
         return {};
     }
@@ -161,8 +158,8 @@ std::optional<RequestResult> RequestReader::handle_field_line(std::string_view l
 }
 
 std::optional<RequestResult> RequestReader::complete_head() {
-    // RFC 9112 §3.2 requires exactly one Host on 1.1. Two are ambiguous at any
-    // version, and that ambiguity is a routing decision an attacker would make.
+    // RFC 9112 §3.2 requires exactly one Host on 1.1. Two are ambiguous at any version, and that ambiguity is a routing
+    // decision an attacker would make.
     const auto host_count = request_.headers.count("host");
     if (host_count > 1 || (host_count == 0 && request_.version == Version::Http11)) {
         return fail(RequestError::Malformed);
@@ -215,8 +212,7 @@ RequestResult RequestReader::next_request() {
 
         // One LineError, two answers: only this layer knows which line it asked for.
         if (line_res.error == LineError::LineTooLong) {
-            return fail(phase_ == Phase::RequestLine ? RequestError::RequestLineTooLong
-                                                     : RequestError::HeaderTooLong);
+            return fail(phase_ == Phase::RequestLine ? RequestError::RequestLineTooLong : RequestError::HeaderTooLong);
         }
 
         if (!line_res.line.has_value()) {
@@ -229,8 +225,7 @@ RequestResult RequestReader::next_request() {
             return fail(RequestError::HeadTooLarge);
         }
 
-        auto result =
-            phase_ == Phase::RequestLine ? handle_request_line(line) : handle_field_line(line);
+        auto result = phase_ == Phase::RequestLine ? handle_request_line(line) : handle_field_line(line);
         if (result.has_value()) {
             return std::move(*result);
         }

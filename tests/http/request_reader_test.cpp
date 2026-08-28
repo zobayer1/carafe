@@ -16,8 +16,8 @@ using carafe::http::RequestReader;
 using carafe::http::RequestResult;
 using carafe::http::Version;
 
-// Mirror the caps in request_reader.cpp and line_reader.cpp, which tests cannot
-// reach. Crossing each from both sides keeps drift from being silent.
+// Mirror the caps in request_reader.cpp and line_reader.cpp, which tests cannot reach. Crossing each from both sides
+// keeps drift from being silent.
 constexpr std::size_t max_head_bytes = 65536;
 constexpr std::size_t max_header_fields = 100;
 constexpr std::size_t max_line_length = 8192;
@@ -30,8 +30,8 @@ RequestResult read(RequestReader& reader, std::string_view bytes) {
     return reader.next_request();
 }
 
-// Feeds one byte at a time, stopping at the first completed request or failure,
-// so every chunk boundary in the head is exercised.
+// Feeds one byte at a time, stopping at the first completed request or failure, so every chunk boundary in the head is
+// exercised.
 RequestResult read_bytewise(RequestReader& reader, std::string_view bytes) {
     RequestResult result;
     for (const char ch : bytes) {
@@ -46,8 +46,8 @@ RequestResult read_bytewise(RequestReader& reader, std::string_view bytes) {
 
 // A POST declaring the length of `body` and carrying it.
 std::string post_body(std::string_view body) {
-    return "POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: " + std::to_string(body.size()) +
-           "\r\n\r\n" + std::string{body};
+    return "POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" +
+           std::string{body};
 }
 
 // A POST whose Content-Length carries `value`, with no body following.
@@ -59,8 +59,8 @@ RequestResult content_length_result(std::string_view value) {
     return read(reader, bytes);
 }
 
-// Feeds `length` body bytes in socket-sized pieces, checking the reader stays
-// mid-drain the whole way: no request, and no failure.
+// Feeds `length` body bytes in socket-sized pieces, checking the reader stays mid-drain the whole way: no request, and
+// no failure.
 void feed_body(RequestReader& reader, std::size_t length) {
     constexpr std::size_t chunk = 4096;
     for (std::size_t sent = 0; sent < length; sent += chunk) {
@@ -80,8 +80,8 @@ std::string pad_fields(std::size_t count, std::size_t value_size) {
     return out;
 }
 
-// A padding field of exactly `value_size + pad_field_overhead` wire bytes. The
-// index is zero-padded so the size does not depend on how many came before it.
+// A padding field of exactly `value_size + pad_field_overhead` wire bytes. The index is zero-padded so the size does
+// not depend on how many came before it.
 constexpr std::size_t pad_field_overhead = 13;  // "x-pad-NNN: " + CRLF
 
 std::string pad_field(std::size_t index, std::size_t value_size) {
@@ -90,9 +90,8 @@ std::string pad_field(std::size_t index, std::size_t value_size) {
     return "x-pad-" + digits + ": " + std::string(value_size, 'v') + "\r\n";
 }
 
-// A complete head whose wire size, every terminator included, is exactly
-// `bytes`. Padding is split across several fields because no single line may
-// exceed max_line_length.
+// A complete head whose wire size, every terminator included, is exactly `bytes`. Padding is split across several
+// fields because no single line may exceed max_line_length.
 std::string head_of_size(std::size_t bytes) {
     const std::string prefix = "GET / HTTP/1.1\r\nHost: x\r\n";
     constexpr std::size_t chunk = 4000;
@@ -151,20 +150,18 @@ TEST(RequestReader, AcceptsHttp10WithoutHost) {
     EXPECT_TRUE(result.request->headers.empty());
 }
 
-// The whole head delivered one byte per append, which is the shape hostile
-// input takes and the case every resumed scan has to survive.
+// The whole head delivered one byte per append, which is the shape hostile input takes and the case every resumed scan
+// has to survive.
 TEST(RequestReader, SurvivesBytewiseDelivery) {
     RequestReader reader;
-    const auto result =
-        read_bytewise(reader, "GET /a?b=c HTTP/1.1\r\nHost: x\r\nAccept: */*\r\n\r\n");
+    const auto result = read_bytewise(reader, "GET /a?b=c HTTP/1.1\r\nHost: x\r\nAccept: */*\r\n\r\n");
     ASSERT_TRUE(result) << "unexpected error: " << result.error;
     ASSERT_TRUE(result.request.has_value());
     EXPECT_EQ(result.request->target, "/a?b=c");
     EXPECT_EQ(result.request->headers.get("accept"), "*/*");
 }
 
-// The blank line ends the head. Until it arrives there is no request, and that
-// must not read as a failure.
+// The blank line ends the head. Until it arrives there is no request, and that must not read as a failure.
 TEST(RequestReader, WaitsForTheBlankLine) {
     RequestReader reader;
     const auto pending = read(reader, "GET / HTTP/1.1\r\nHost: x\r\n");
@@ -177,8 +174,8 @@ TEST(RequestReader, WaitsForTheBlankLine) {
     EXPECT_EQ(done.request->target, "/");
 }
 
-// Completion resets rather than terminating, so a pipelined connection yields
-// its requests one call at a time from bytes that arrived together.
+// Completion resets rather than terminating, so a pipelined connection yields its requests one call at a time from
+// bytes that arrived together.
 TEST(RequestReader, YieldsPipelinedRequestsInTurn) {
     RequestReader reader;
     reader.append(
@@ -213,9 +210,8 @@ TEST(RequestReader, ResetsFieldsBetweenRequests) {
     EXPECT_EQ(second.request->version, Version::Http10);
 }
 
-// The per-request budgets reset with the phase. Without that, a long-lived
-// connection starts rejecting requests that are individually well within both
-// caps. No branch is missing, so only feeding two requests finds it.
+// The per-request budgets reset with the phase. Without that, a long-lived connection starts rejecting requests that
+// are individually well within both caps. No branch is missing, so only feeding two requests finds it.
 TEST(RequestReader, ResetsBudgetsBetweenRequests) {
     const std::string head = "GET / HTTP/1.1\r\nHost: x\r\n" + pad_fields(60, 600) + "\r\n";
     ASSERT_LT(head.size(), max_head_bytes);
@@ -249,41 +245,36 @@ TEST(RequestReader, RejectsMalformedField) {
     EXPECT_EQ(result.error, RequestError::Malformed);
 }
 
-// One LineError::LineTooLong, two outcomes: which one depends on the phase, and
-// resolving that ambiguity is why this class exists.
+// One LineError::LineTooLong, two outcomes: which one depends on the phase, and resolving that ambiguity is why this
+// class exists.
 TEST(RequestReader, DistinguishesOverlongRequestLineFromOverlongField) {
     RequestReader reader1;
     const std::string long_target(max_line_length, 'a');
-    EXPECT_EQ(read(reader1, "GET /" + long_target + " HTTP/1.1\r\n").error,
-              RequestError::RequestLineTooLong);
+    EXPECT_EQ(read(reader1, "GET /" + long_target + " HTTP/1.1\r\n").error, RequestError::RequestLineTooLong);
 
     RequestReader reader2;
     const std::string long_value(max_line_length, 'v');
-    EXPECT_EQ(read(reader2, "GET / HTTP/1.1\r\nX-Long: " + long_value + "\r\n").error,
-              RequestError::HeaderTooLong);
+    EXPECT_EQ(read(reader2, "GET / HTTP/1.1\r\nX-Long: " + long_value + "\r\n").error, RequestError::HeaderTooLong);
 }
 
-// A field count cap the byte cap cannot supply: these fields are tiny, so only
-// counting them catches this.
+// A field count cap the byte cap cannot supply: these fields are tiny, so only counting them catches this.
 TEST(RequestReader, RejectsTooManyFields) {
     RequestReader reader;
-    const auto result =
-        read(reader, "GET / HTTP/1.1\r\nHost: x\r\n" + pad_fields(max_header_fields, 1) + "\r\n");
+    const auto result = read(reader, "GET / HTTP/1.1\r\nHost: x\r\n" + pad_fields(max_header_fields, 1) + "\r\n");
     EXPECT_EQ(result.error, RequestError::TooManyHeaders);
 }
 
 // Exactly at the cap is legal; Host is one of the counted fields.
 TEST(RequestReader, AcceptsFieldsUpToTheCap) {
     RequestReader reader;
-    const auto result = read(
-        reader, "GET / HTTP/1.1\r\nHost: x\r\n" + pad_fields(max_header_fields - 1, 1) + "\r\n");
+    const auto result = read(reader, "GET / HTTP/1.1\r\nHost: x\r\n" + pad_fields(max_header_fields - 1, 1) + "\r\n");
     ASSERT_TRUE(result) << "unexpected error: " << result.error;
     ASSERT_TRUE(result.request.has_value());
     EXPECT_EQ(result.request->headers.size(), max_header_fields);
 }
 
-// The cap is a maximum, not a threshold. Few enough fields that the count cap
-// cannot be what accepts or rejects these two.
+// The cap is a maximum, not a threshold. Few enough fields that the count cap cannot be what accepts or rejects these
+// two.
 TEST(RequestReader, AcceptsHeadAtExactlyTheCap) {
     const std::string head = head_of_size(max_head_bytes);
     ASSERT_EQ(head.size(), max_head_bytes);
@@ -294,9 +285,8 @@ TEST(RequestReader, AcceptsHeadAtExactlyTheCap) {
     EXPECT_TRUE(result.request.has_value());
 }
 
-// One byte more, and it is 431. Being exact is what pins the accounting: an
-// implementation that forgot to count the terminators lands under the cap here
-// and accepts.
+// One byte more, and it is 431. Being exact is what pins the accounting: an implementation that forgot to count the
+// terminators lands under the cap here and accepts.
 TEST(RequestReader, RejectsHeadOneByteOverTheCap) {
     const std::string head = head_of_size(max_head_bytes + 1);
     ASSERT_EQ(head.size(), max_head_bytes + 1);
@@ -318,8 +308,7 @@ TEST(RequestReader, RejectsDuplicateHost) {
     EXPECT_EQ(result.error, RequestError::Malformed);
 }
 
-// There is no resynchronising a broken head: the caller must close, and feeding
-// more bytes must not produce a request.
+// There is no resynchronising a broken head: the caller must close, and feeding more bytes must not produce a request.
 TEST(RequestReader, FailureIsTerminal) {
     RequestReader reader;
     EXPECT_EQ(read(reader, "BOGUS\r\n").error, RequestError::Malformed);
@@ -341,8 +330,7 @@ TEST(RequestReader, ReadsABodyOfTheDeclaredLength) {
 // Until the body is whole there is no request, and that must not read as a failure.
 TEST(RequestReader, WaitsForTheWholeBody) {
     RequestReader reader;
-    const auto pending =
-        read(reader, "POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhel");
+    const auto pending = read(reader, "POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhel");
     EXPECT_TRUE(pending) << "unexpected error: " << pending.error;
     EXPECT_FALSE(pending.request.has_value());
 
@@ -377,8 +365,8 @@ TEST(RequestReader, TreatsAZeroContentLengthAsNoBody) {
     EXPECT_TRUE(result.request->body.empty());
 }
 
-// The bug this closes: unconsumed body bytes used to parse as the next request
-// line, answering an ordinary GET with 501.
+// The bug this closes: unconsumed body bytes used to parse as the next request line, answering an ordinary GET with
+// 501.
 TEST(RequestReader, KeepsBodyBytesOutOfTheNextRequestLine) {
     RequestReader reader;
     reader.append(
@@ -397,8 +385,7 @@ TEST(RequestReader, KeepsBodyBytesOutOfTheNextRequestLine) {
     EXPECT_TRUE(second.request->body.empty());
 }
 
-// Framing does not consult the method: five bytes are five bytes whatever the
-// verb means by them.
+// Framing does not consult the method: five bytes are five bytes whatever the verb means by them.
 TEST(RequestReader, ReadsABodyOnAGet) {
     RequestReader reader;
     const auto result = read(reader, "GET /p HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nhi");
@@ -435,16 +422,16 @@ TEST(RequestReader, AcceptsABodyAtExactlyTheCap) {
     EXPECT_EQ(result.request->body.size(), max_body_bytes);
 }
 
-// Refused on the declaration alone, so the bytes are never buffered to find out.
-// The length is known, so the reader can still read past them.
+// Refused on the declaration alone, so the bytes are never buffered to find out. The length is known, so the reader can
+// still read past them.
 TEST(RequestReader, RejectsAContentLengthOverTheCap) {
     const auto result = content_length_result(std::to_string(max_body_bytes + 1));
     EXPECT_EQ(result.error, RequestError::BodyTooLarge);
     EXPECT_TRUE(result.stream_continues);
 }
 
-// Bounded before the multiply overflows, so it cannot wrap into a small length.
-// Nothing usable came back, so there is no length to drain and no way to resume.
+// Bounded before the multiply overflows, so it cannot wrap into a small length. Nothing usable came back, so there is
+// no length to drain and no way to resume.
 TEST(RequestReader, RejectsAContentLengthTooLargeToHold) {
     const auto result = content_length_result("99999999999999999999");
     EXPECT_EQ(result.error, RequestError::BodyTooLarge);
@@ -453,13 +440,11 @@ TEST(RequestReader, RejectsAContentLengthTooLargeToHold) {
 
 TEST(RequestReader, RejectsANonDigitContentLength) {
     for (const std::string_view value : {"abc", "3a", "a3", "+3", "-3", "3.0", "0x3", "3 3"}) {
-        EXPECT_EQ(content_length_result(value).error, RequestError::Malformed)
-            << "value: " << value;
+        EXPECT_EQ(content_length_result(value).error, RequestError::Malformed) << "value: " << value;
     }
 }
 
-// The comma spelling of a repeated field: rejected by the digit rule, not by
-// counting, because it arrives as one field.
+// The comma spelling of a repeated field: rejected by the digit rule, not by counting, because it arrives as one field.
 TEST(RequestReader, RejectsACommaSeparatedContentLength) {
     EXPECT_EQ(content_length_result("3, 3").error, RequestError::Malformed);
 }
@@ -472,8 +457,8 @@ TEST(RequestReader, RejectsAnEmptyContentLength) {
 // Refused even though the two agree: only one framing directive may be believed.
 TEST(RequestReader, RejectsARepeatedContentLength) {
     RequestReader reader;
-    const auto result = read(
-        reader, "POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\nContent-Length: 3\r\n\r\nabc");
+    const auto result =
+        read(reader, "POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\nContent-Length: 3\r\n\r\nabc");
     EXPECT_EQ(result.error, RequestError::Malformed);
 }
 
@@ -483,36 +468,32 @@ TEST(RequestReader, RejectsAnyTransferEncoding) {
         std::string bytes = "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: ";
         bytes += coding;
         bytes += "\r\n\r\n";
-        EXPECT_EQ(read(reader, bytes).error, RequestError::UnsupportedTransferEncoding)
-            << "coding: " << coding;
+        EXPECT_EQ(read(reader, bytes).error, RequestError::UnsupportedTransferEncoding) << "coding: " << coding;
     }
 }
 
-// Tested first, so the pair that smuggles a request past one recipient never
-// reaches the length rule at all.
+// Tested first, so the pair that smuggles a request past one recipient never reaches the length rule at all.
 TEST(RequestReader, RejectsTransferEncodingAheadOfContentLength) {
     RequestReader reader;
-    const auto result =
-        read(reader,
-             "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nContent-Length: 3\r\n"
-             "\r\nabc");
+    const auto result = read(reader,
+                             "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nContent-Length: 3\r\n"
+                             "\r\nabc");
     EXPECT_EQ(result.error, RequestError::UnsupportedTransferEncoding);
 }
 
-// Past the drain ceiling the length is known and refused anyway: reading that
-// much only to throw it away costs more than the connection is worth.
+// Past the drain ceiling the length is known and refused anyway: reading that much only to throw it away costs more
+// than the connection is worth.
 TEST(RequestReader, EndsTheStreamOnABodyTooLargeToDrain) {
     const auto result = content_length_result(std::to_string(max_drain_bytes + 1));
     EXPECT_EQ(result.error, RequestError::BodyTooLarge);
     EXPECT_FALSE(result.stream_continues);
 }
 
-// The refused body is dropped and what follows it is an ordinary request, with
-// none of the refused head's fields carried into it.
+// The refused body is dropped and what follows it is an ordinary request, with none of the refused head's fields
+// carried into it.
 TEST(RequestReader, DrainsARefusedBodyAndReadsTheNext) {
     RequestReader reader;
-    reader.append(post_body(std::string(max_body_bytes + 1, 'b')) +
-                  "GET /b HTTP/1.1\r\nHost: y\r\n\r\n");
+    reader.append(post_body(std::string(max_body_bytes + 1, 'b')) + "GET /b HTTP/1.1\r\nHost: y\r\n\r\n");
 
     const auto refused = reader.next_request();
     EXPECT_EQ(refused.error, RequestError::BodyTooLarge);
@@ -531,8 +512,7 @@ TEST(RequestReader, DrainsARefusedBodyAcrossAppends) {
     constexpr std::size_t length = max_body_bytes + 1;
 
     RequestReader reader;
-    reader.append("POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: " + std::to_string(length) +
-                  "\r\n\r\n");
+    reader.append("POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: " + std::to_string(length) + "\r\n\r\n");
     EXPECT_EQ(reader.next_request().error, RequestError::BodyTooLarge);
 
     feed_body(reader, length);
@@ -546,9 +526,8 @@ TEST(RequestReader, DrainsARefusedBodyAcrossAppends) {
 // Everything else leaves the reader with no idea where the next request starts.
 TEST(RequestReader, EndsTheStreamOnAFailureItCannotReadPast) {
     for (const std::string_view head :
-         {"NOTAREQUEST\r\n\r\n", "GET / HTTP/1.1\r\nHost: x\r\nbad header\r\n\r\n",
-          "GET / HTTP/2.0\r\nHost: x\r\n\r\n", "FROB / HTTP/1.1\r\nHost: x\r\n\r\n",
-          "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n",
+         {"NOTAREQUEST\r\n\r\n", "GET / HTTP/1.1\r\nHost: x\r\nbad header\r\n\r\n", "GET / HTTP/2.0\r\nHost: x\r\n\r\n",
+          "FROB / HTTP/1.1\r\nHost: x\r\n\r\n", "POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n",
           "POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: abc\r\n\r\n"}) {
         RequestReader reader;
         const auto result = read(reader, head);
@@ -557,8 +536,8 @@ TEST(RequestReader, EndsTheStreamOnAFailureItCannotReadPast) {
     }
 }
 
-// The version outlives the failure: a refusal hands over no Request, and the
-// caller still has to decide whether the client is waiting for a close.
+// The version outlives the failure: a refusal hands over no Request, and the caller still has to decide whether the
+// client is waiting for a close.
 TEST(RequestReader, ReportsTheVersionOfARefusedRequest) {
     const std::string length = std::to_string(max_body_bytes + 1);
 
@@ -575,8 +554,8 @@ TEST(RequestReader, ReportsTheVersionOfARefusedRequest) {
     EXPECT_EQ(refused_eleven.version, Version::Http11);
 }
 
-// A latched failure repeats its whole answer, version included: the caller may
-// ask again before it decides what to write.
+// A latched failure repeats its whole answer, version included: the caller may ask again before it decides what to
+// write.
 TEST(RequestReader, KeepsTheVersionOnARepeatedFailure) {
     RequestReader reader;
     reader.append("POST /p HTTP/1.0\r\nTransfer-Encoding: chunked\r\n\r\n");

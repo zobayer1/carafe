@@ -8,9 +8,8 @@
 
 #include <ostream>
 
-// gtest finds these by ADL, so they must sit in carafe::http rather than in a
-// test file's anonymous namespace. `inline` is what lets more than one test
-// translation unit include them without a duplicate-symbol link error.
+// gtest finds these by ADL, so they must sit in carafe::http rather than in a test file's anonymous namespace. `inline`
+// is what lets more than one test translation unit include them without a duplicate-symbol link error.
 namespace carafe::http {
 
 inline std::ostream& operator<<(std::ostream& os, Method method) {

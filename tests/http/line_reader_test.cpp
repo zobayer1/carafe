@@ -33,8 +33,8 @@ Lines drain(LineReader& reader) {
     }
 }
 
-// take() views into the buffer, which the next append() reallocates: this copies
-// out. Nothing yet stays distinct from an empty take, because those differ.
+// take() views into the buffer, which the next append() reallocates: this copies out. Nothing yet stays distinct from
+// an empty take, because those differ.
 std::optional<std::string> take(LineReader& reader, std::size_t n) {
     const auto bytes = reader.take(n);
     if (!bytes.has_value()) {
@@ -117,8 +117,8 @@ TEST(LineReader, LoneCarriageReturnIsNotATerminator) {
     EXPECT_EQ(drain(reader), (Lines{"a\rb"}));
 }
 
-// RFC 9112 §2.2 permits recognising a bare LF; we decline, so a proxy requiring
-// CRLF cannot disagree with us about where a request ends.
+// RFC 9112 §2.2 permits recognising a bare LF; we decline, so a proxy requiring CRLF cannot disagree with us about
+// where a request ends.
 TEST(LineReader, BareLineFeedIsNotATerminator) {
     LineReader reader;
     reader.append("a\nb\r\n");
@@ -229,16 +229,14 @@ TEST(LineReader, TakesBytesFollowingALine) {
     EXPECT_EQ(take(reader, 4), "body");
 }
 
-// Zero bytes are here whatever the buffer holds: a Content-Length of 0 must not
-// be answered "nothing yet" forever.
+// Zero bytes are here whatever the buffer holds: a Content-Length of 0 must not be answered "nothing yet" forever.
 TEST(LineReader, TakesNothingWithoutWaiting) {
     LineReader reader;
     EXPECT_EQ(take(reader, 0), "");
 }
 
-// Taken bytes were never scanned for a terminator. A scan position left behind
-// them finds the CRLF inside them and measures the next line from a start that
-// is already past its end.
+// Taken bytes were never scanned for a terminator. A scan position left behind them finds the CRLF inside them and
+// measures the next line from a start that is already past its end.
 TEST(LineReader, LineScanningResumesAfterTakenBytes) {
     LineReader reader;
     reader.append("A\r\nB\r\n");
@@ -246,8 +244,7 @@ TEST(LineReader, LineScanningResumesAfterTakenBytes) {
     EXPECT_EQ(drain(reader), (Lines{"B"}));
 }
 
-// Compaction shifts the scan position back by the consumed prefix, which
-// underflows if a take left it behind.
+// Compaction shifts the scan position back by the consumed prefix, which underflows if a take left it behind.
 TEST(LineReader, SurvivesCompactionAfterATake) {
     LineReader reader;
     reader.append("abcd");
@@ -256,8 +253,8 @@ TEST(LineReader, SurvivesCompactionAfterATake) {
     EXPECT_EQ(drain(reader), (Lines{"cde"}));
 }
 
-// next_line's cap guards a scan for a terminator that may never come. take is
-// told its length up front and has nothing to guard against.
+// next_line's cap guards a scan for a terminator that may never come. take is told its length up front and has nothing
+// to guard against.
 TEST(LineReader, TakesMoreThanTheLineLengthCap) {
     LineReader reader;
     const std::string body(max_line_length + 1, 'x');
@@ -272,8 +269,7 @@ TEST(LineReader, DiscardsExactlyTheRequestedBytes) {
     EXPECT_EQ(take(reader, 3), "def");
 }
 
-// Fewer than asked is the ordinary answer rather than a failure: the rest of the
-// body has not arrived yet.
+// Fewer than asked is the ordinary answer rather than a failure: the rest of the body has not arrived yet.
 TEST(LineReader, DiscardsOnlyWhatHasArrived) {
     LineReader reader;
     reader.append("ab");
@@ -304,8 +300,7 @@ TEST(LineReader, AccumulatesDiscardsAcrossAppends) {
     EXPECT_EQ(take(reader, 2), "kl");
 }
 
-// Discarded bytes were never scanned, so a scan position left behind them finds
-// a terminator inside them.
+// Discarded bytes were never scanned, so a scan position left behind them finds a terminator inside them.
 TEST(LineReader, LineScanningResumesAfterDiscardedBytes) {
     LineReader reader;
     reader.append("A\r\nB\r\n");
@@ -313,8 +308,7 @@ TEST(LineReader, LineScanningResumesAfterDiscardedBytes) {
     EXPECT_EQ(drain(reader), (Lines{"B"}));
 }
 
-// Compaction shifts the scan position back by the consumed prefix, which
-// underflows if a discard left it behind.
+// Compaction shifts the scan position back by the consumed prefix, which underflows if a discard left it behind.
 TEST(LineReader, SurvivesCompactionAfterADiscard) {
     LineReader reader;
     reader.append("abcd");

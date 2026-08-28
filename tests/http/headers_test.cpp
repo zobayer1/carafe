@@ -30,8 +30,8 @@ TEST(Headers, StartsEmpty) {
     EXPECT_FALSE(headers.get("host").has_value());
 }
 
-// add() is the boundary that enforces the lowercased-name invariant, so a caller
-// building headers by hand cannot break lookup.
+// add() is the boundary that enforces the lowercased-name invariant, so a caller building headers by hand cannot break
+// lookup.
 TEST(Headers, AddLowercasesTheName) {
     Headers headers;
     headers.add(HeaderField{"CONTENT-Type", "text/html"});
@@ -62,8 +62,8 @@ TEST(Headers, GetReturnsTheFirstOfRepeatedFields) {
     EXPECT_EQ(headers.get("accept"), "text/html");
 }
 
-// Absent and present-but-empty must not collapse: one is "no such field", the
-// other is a field whose value is the empty string.
+// Absent and present-but-empty must not collapse: one is "no such field", the other is a field whose value is the empty
+// string.
 TEST(Headers, DistinguishesAbsentFromEmptyValue) {
     Headers headers;
     headers.add(HeaderField{"x-empty", ""});
@@ -80,8 +80,8 @@ TEST(Headers, ContainsMatchesGet) {
     EXPECT_FALSE(headers.contains("x-missing"));
 }
 
-// count() is what makes the singleton rules checkable: HTTP/1.1 needs exactly
-// one Host, and conflicting Content-Length duplicates are a smuggling vector.
+// count() is what makes the singleton rules checkable: HTTP/1.1 needs exactly one Host, and conflicting Content-Length
+// duplicates are a smuggling vector.
 TEST(Headers, CountsRepeatedFields) {
     Headers headers;
     headers.add(HeaderField{"host", "a"});
@@ -111,8 +111,8 @@ TEST(Headers, DoesNotMatchOnPrefix) {
     EXPECT_FALSE(headers.contains("content-length-extra"));
 }
 
-// Equal-length names must still be compared character by character; a length
-// check alone would make every same-length name match.
+// Equal-length names must still be compared character by character; a length check alone would make every same-length
+// name match.
 TEST(Headers, DistinguishesNamesOfEqualLength) {
     Headers headers;
     headers.add(HeaderField{"accept", "a"});
@@ -122,8 +122,7 @@ TEST(Headers, DistinguishesNamesOfEqualLength) {
     EXPECT_FALSE(headers.contains("reject"));
 }
 
-// Non-ASCII bytes are compared, not folded: ASCII-only case folding is the whole
-// reason std::tolower is avoided.
+// Non-ASCII bytes are compared, not folded: ASCII-only case folding is the whole reason std::tolower is avoided.
 TEST(Headers, DoesNotFoldNonAsciiBytes) {
     Headers headers;
     headers.add(HeaderField{"x-\xC3\xA9", "v"});

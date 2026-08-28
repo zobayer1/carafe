@@ -29,8 +29,8 @@ using carafe::test::AlarmIn;
 using carafe::test::alarms_delivered;
 using carafe::test::mask_alarm;
 
-// The handshake completes without an accept() on the other side, so the caller gets
-// a live client back. An invalid Socket means nothing was listening.
+// The handshake completes without an accept() on the other side, so the caller gets a live client back. An invalid
+// Socket means nothing was listening.
 Socket connect_to(std::uint16_t port) {
     Socket client{::socket(AF_INET, SOCK_STREAM, 0)};
     if (!client.valid()) {
@@ -65,8 +65,7 @@ char read_byte(const Socket& sock) {
     return byte;
 }
 
-// A bind with no SO_REUSEADDR, which is how a test tells a free port from one
-// still held by a socket in TIME_WAIT.
+// A bind with no SO_REUSEADDR, which is how a test tells a free port from one still held by a socket in TIME_WAIT.
 int plain_bind_errno(std::uint16_t port) {
     const Socket sock{::socket(AF_INET, SOCK_STREAM, 0)};
     EXPECT_TRUE(sock.valid());
@@ -127,8 +126,8 @@ TEST(ListenOn, ReportsTheRequestedPortWhenGivenOne) {
     EXPECT_EQ(result.listener->port(), port);
 }
 
-// SO_REUSEADDR permits binding over TIME_WAIT, not over a live listener. That
-// would need SO_REUSEPORT, which we deliberately do not set.
+// SO_REUSEADDR permits binding over TIME_WAIT, not over a live listener. That would need SO_REUSEPORT, which we
+// deliberately do not set.
 TEST(ListenOn, RejectsAPortAlreadyBeingListenedOn) {
     const auto held = listen_on(0);
     ASSERT_TRUE(held);
@@ -141,8 +140,8 @@ TEST(ListenOn, RejectsAPortAlreadyBeingListenedOn) {
     EXPECT_FALSE(result.listener.has_value());
 }
 
-// What SO_REUSEADDR is actually for. TIME_WAIT belongs to the end that closes
-// first, so the accepted socket goes before the client.
+// What SO_REUSEADDR is actually for. TIME_WAIT belongs to the end that closes first, so the accepted socket goes before
+// the client.
 TEST(ListenOn, RebindsAPortLeftInTimeWait) {
     std::uint16_t port = 0;
     {
@@ -167,8 +166,8 @@ TEST(ListenOn, RebindsAPortLeftInTimeWait) {
     EXPECT_EQ(result.os_error, 0);
 }
 
-// Every failure path returns with the descriptor still owned by a local Socket.
-// Leak one per call and the numbers climb; close them and the same one comes back.
+// Every failure path returns with the descriptor still owned by a local Socket. Leak one per call and the numbers
+// climb; close them and the same one comes back.
 TEST(ListenOn, ClosesTheDescriptorWhenBindFails) {
     const auto held = listen_on(0);
     ASSERT_TRUE(held);
@@ -182,8 +181,7 @@ TEST(ListenOn, ClosesTheDescriptorWhenBindFails) {
     EXPECT_EQ(next_free_fd(), before);
 }
 
-// Moving must carry the socket whole: destroying the source afterwards is what
-// closes the descriptor if it did not.
+// Moving must carry the socket whole: destroying the source afterwards is what closes the descriptor if it did not.
 TEST(Listener, MoveKeepsTheSocketListening) {
     auto source = listen_on(0);
     ASSERT_TRUE(source);
@@ -292,8 +290,8 @@ TEST(Accept, ReportsTheErrnoWhenNoDescriptorIsAvailable) {
     EXPECT_EQ(result.os_error, EMFILE);
 }
 
-// The alarm fires while accept is blocked and the client arrives only later, so
-// without the retry loop this returns EINTR instead of a connection.
+// The alarm fires while accept is blocked and the client arrives only later, so without the retry loop this returns
+// EINTR instead of a connection.
 TEST(Accept, KeepsWaitingWhenASignalInterruptsIt) {
     auto held = listen_on(0);
     ASSERT_TRUE(held);

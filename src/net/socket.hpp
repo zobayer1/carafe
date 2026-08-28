@@ -6,8 +6,8 @@
 
 namespace carafe::net {
 
-// A view into the caller's buffer, or nothing. Nothing means the peer closed:
-// on a blocking socket read() returns 0 only at end of stream.
+// A view into the caller's buffer, or nothing. Nothing means the peer closed: on a blocking socket read() returns 0
+// only at end of stream.
 struct ReadResult {
     int os_error = 0;
     std::optional<std::string_view> bytes;
@@ -17,8 +17,7 @@ struct ReadResult {
     }
 };
 
-// Every byte or none of them: a short write is an obligation, not a result, so
-// this does not hand one back.
+// Every byte or none of them: a short write is an obligation, not a result, so this does not hand one back.
 struct WriteResult {
     int os_error = 0;
 
@@ -27,8 +26,8 @@ struct WriteResult {
     }
 };
 
-// Sole owner of one file descriptor, closed exactly once when the Socket dies.
-// An empty Socket holds -1 and owns nothing.
+// Sole owner of one file descriptor, closed exactly once when the Socket dies. An empty Socket holds -1 and owns
+// nothing.
 class Socket {
 public:
     // -1 is accepted: a failed accept() has no descriptor to give.
@@ -50,8 +49,7 @@ public:
         return fd_ != -1;
     }
 
-    // Up to `size` bytes into the caller's buffer. The view in the result points
-    // into that buffer and dies with it.
+    // Up to `size` bytes into the caller's buffer. The view in the result points into that buffer and dies with it.
     [[nodiscard]] ReadResult read(char* buffer, std::size_t size);
 
     // Every byte or a failure: EINTR is retried, so a short write never surfaces.
