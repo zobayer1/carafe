@@ -1143,3 +1143,47 @@ What this does not do is make exhaustion harmless. The server survives and canno
 serve anyone until the descriptors come back, and they come back only when the
 clients holding them relent. Making that recovery independent of the attacker is
 the idle timeout, not this.
+
+## A connection that says nothing still costs something
+
+A thread per connection turned one slow client from an outage into a leak, which
+is better and is not enough. Sixty sockets that each sent half a request line held
+sixty threads and sixty descriptors for as long as the client cared to hold them,
+and the server had no opinion about it at all: `recv` waits until bytes arrive or
+the peer hangs up, and a peer that intends neither can wait for ever.
+
+So every accepted socket gets `SO_RCVTIMEO`, and the plumbing for it already
+existed. `Socket::read` reports the resulting `EAGAIN` as an `os_error` like any
+other, `Connection` passes it up, and `serve_connection` already treated a read
+failure as "stop, there is nobody to answer". The only new question was whether
+stopping silently is right, and it is right exactly half the time.
+
+A connection that finished its last request and went quiet is idle. Closing it is
+routine, the client asked for nothing, and there is nothing to say. A connection
+that got half a request out and stalled is a different thing: that client did ask,
+and closing on it without a word leaves it unable to tell a refusal from a network
+fault. RFC 9110 §15.5.9 has a status for precisely this, so it gets `408` and the
+`connection: close` that goes with any response ending a connection.
+
+Telling those apart looked like it needed the reader to expose its partial state,
+and that would have been wrong. A client sending `GET /hel` and stopping leaves
+`head_bytes_` at zero and the phase at `RequestLine`, because nothing has been
+consumed yet; the bytes are sitting in `LineReader`. A predicate built on reader
+state would answer "no request in progress" for the one case the whole feature
+exists to catch. What actually knows is `Connection`, which sees both the bytes
+arriving and the request being handed over, so the answer is one `bool` set on a
+read and cleared by a completed request, and no new API below it.
+
+Thirty seconds is arbitrary and nothing derives it. nginx splits the same idea
+into sixty seconds for a header and seventy-five for an idle keep-alive; one
+number for both is coarser and enough at this size. It is the sort of constant
+that wants to become configuration long before it wants to become two constants.
+
+Two holes are left open deliberately. The deadline is per `recv`, so a client
+sending one byte every twenty seconds renews it for ever: bounding that needs a
+deadline on the whole request rather than on each read, and the head cap bounds
+bytes rather than time. And this is the receive side only, so a client that stops
+reading a response can still block a thread in `send`, which is the same shape and
+wants `SO_SNDTIMEO`. Both belong with the thread pool, because a pool without them
+is worse than no pool: a bounded number of workers held by clients who never
+finish is the original outage with a smaller number attached to it.

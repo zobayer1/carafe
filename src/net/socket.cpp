@@ -1,13 +1,16 @@
 #include "net/socket.hpp"
 
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
+#include <ctime>
 #include <optional>
 #include <string_view>
 #include <unistd.h>
 #include <utility>
 
 #include <sys/socket.h>
+#include <sys/time.h>
 
 namespace carafe::net {
 
@@ -68,6 +71,16 @@ WriteResult Socket::write(std::string_view bytes) {
         bytes.remove_prefix(static_cast<std::size_t>(written));
     }
     return {0};
+}
+
+// Not const in a plainer sense than read and write: this changes how the socket behaves from here on.
+// NOLINTNEXTLINE(readability-make-member-function-const)
+bool Socket::set_receive_timeout(std::chrono::milliseconds limit) noexcept {
+    const auto whole = std::chrono::duration_cast<std::chrono::seconds>(limit);
+    timeval deadline{};
+    deadline.tv_sec = static_cast<time_t>(whole.count());
+    deadline.tv_usec = static_cast<suseconds_t>((limit - whole) / std::chrono::microseconds(1));
+    return ::setsockopt(fd_, SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof(deadline)) == 0;
 }
 
 }  // namespace carafe::net

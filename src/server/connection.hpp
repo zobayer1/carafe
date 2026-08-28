@@ -42,10 +42,17 @@ public:
     // request sitting in the reader.
     [[nodiscard]] net::WriteResult write(std::string_view bytes);
 
+    // Bytes arrived that no handed-over request has claimed, so the client asked for something and is owed an answer.
+    // False between requests, which is when a deadline firing is just an idle connection.
+    [[nodiscard]] bool request_in_progress() const noexcept {
+        return request_in_progress_;
+    }
+
 private:
     net::Socket socket_;
     http::RequestReader reader_;
     std::array<char, 4096> buffer_{};
+    bool request_in_progress_ = false;
 };
 
 }  // namespace carafe::server

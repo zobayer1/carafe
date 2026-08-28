@@ -432,7 +432,8 @@ TEST(ServeConnection, WritesNothingWhenTheClientFinishesFirst) {
 
 // A failed read is not a bad request: there is no head to reject, and nobody to tell either way. A receive deadline is
 // the cheapest way to make reads fail on a socket that can still be written to, which is what separates this from a
-// client that simply hung up.
+// client that simply hung up. Nothing arrived here, so nothing is owed; its sibling below sends half a request first
+// and is answered.
 TEST(ServeConnection, WritesNothingWhenTheReadFails) {
     auto pair = connected_pair();
 
@@ -446,6 +447,64 @@ TEST(ServeConnection, WritesNothingWhenTheReadFails) {
 
     std::array<char, 64> buf{};
     EXPECT_EQ(::recv(pair.first.get(), buf.data(), buf.size(), 0), ssize_t{0});
+}
+
+// A connection that answered and then went quiet is idle, not stalled: the request it carried was claimed when it was
+// handed over, so a deadline firing afterwards owes nobody an answer.
+TEST(ServeConnection, WritesNothingMoreWhenAnAnsweredConnectionGoesIdle) {
+    auto pair = connected_pair();
+    send_all(pair.first, get_root);
+
+    const timeval deadline{0, suseconds_t{50} * 1000};
+    ASSERT_EQ(::setsockopt(pair.second.get(), SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof(deadline)), 0);
+
+    {
+        Connection conn{std::move(pair.second)};
+        serve_connection(conn, routing("/"));
+    }
+
+    std::string response;
+    std::array<char, 4096> buf{};
+    while (true) {
+        const ssize_t got = ::recv(pair.first.get(), buf.data(), buf.size(), 0);
+        if (got <= 0) {
+            break;
+        }
+        response.append(buf.data(), static_cast<std::size_t>(got));
+    }
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 200 OK");
+    EXPECT_EQ(response.find("408"), std::string::npos);
+}
+
+// A client that got half a request out and then stopped has asked for something, so it is told what happened rather
+// than left to guess at a connection that closed. RFC 9110 §15.5.9, and the reply says it is closing because it is.
+TEST(ServeConnection, AnswersFourOhEightWhenARequestArrivesHalfWritten) {
+    auto pair = connected_pair();
+    send_all(pair.first, "GET /hel");
+
+    const timeval deadline{0, suseconds_t{50} * 1000};
+    ASSERT_EQ(::setsockopt(pair.second.get(), SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof(deadline)), 0);
+
+    // Not serve_and_read: that half-closes the client first, and a read ending at end of stream is a client that
+    // finished rather than one that stalled. Only a deadline reaches the reply below.
+    {
+        Connection conn{std::move(pair.second)};
+        serve_connection(conn, routing("/hello"));
+    }
+
+    std::string response;
+    std::array<char, 4096> buf{};
+    while (true) {
+        const ssize_t got = ::recv(pair.first.get(), buf.data(), buf.size(), 0);
+        if (got <= 0) {
+            break;
+        }
+        response.append(buf.data(), static_cast<std::size_t>(got));
+    }
+
+    EXPECT_EQ(status_line(response), "HTTP/1.1 408 Request Timeout");
+    EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
 }
 
 // The write fails with EPIPE and the loop has to stop on it. Reaching the end of this test at all is the assertion: a

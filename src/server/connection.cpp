@@ -18,6 +18,9 @@ ConnectionResult Connection::next_request() {
         // Anything but "nothing yet": a failure carries no request, a success carries one, and both carry whatever the
         // reader said about the stream.
         if (!parsed || parsed.request) {
+            if (parsed.request.has_value()) {
+                request_in_progress_ = false;
+            }
             return {parsed.error, 0, std::move(parsed.request), parsed.stream_continues, parsed.version};
         }
 
@@ -32,6 +35,7 @@ ConnectionResult Connection::next_request() {
             return {};
         }
         reader_.append(*chunk.bytes);
+        request_in_progress_ = true;
     }
 }
 

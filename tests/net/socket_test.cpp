@@ -427,4 +427,58 @@ TEST(SocketWrite, RetriesWhenASignalArrivesBeforeAnyByteMoves) {
     EXPECT_EQ(received.back(), '!');
 }
 
+// Without a deadline a read on an idle socket waits for as long as the peer cares to say nothing, which is a thread
+// and a descriptor held for free.
+TEST(SocketReceiveTimeout, ReportsEagainWhenNothingArrivesInTime) {
+    auto pair = connected_pair();
+    ASSERT_TRUE(pair.first.set_receive_timeout(std::chrono::milliseconds(50)));
+
+    std::array<char, 64> buf{};
+    const ReadResult result = pair.first.read(buf.data(), buf.size());
+
+    EXPECT_FALSE(result);
+    EXPECT_FALSE(result.bytes.has_value());
+    EXPECT_TRUE(result.os_error == EAGAIN || result.os_error == EWOULDBLOCK) << "errno " << result.os_error;
+}
+
+// The caller is told, because a connection whose reads cannot be bounded is one the server would rather not take.
+TEST(SocketReceiveTimeout, ReportsFailureWhenTheDescriptorIsInvalid) {
+    Socket empty{-1};
+    EXPECT_FALSE(empty.set_receive_timeout(std::chrono::milliseconds(50)));
+}
+
+// The deadline bounds waiting, not reading: bytes already there are answered at once.
+TEST(SocketReceiveTimeout, LeavesAReadWithBytesWaitingAlone) {
+    auto pair = connected_pair();
+    ASSERT_TRUE(pair.first.set_receive_timeout(std::chrono::milliseconds(50)));
+    ASSERT_TRUE(pair.second.write("hi"));
+
+    std::array<char, 64> buf{};
+    const ReadResult result = pair.first.read(buf.data(), buf.size());
+
+    ASSERT_TRUE(result) << "errno " << result.os_error;
+    EXPECT_EQ(result.bytes, "hi");
+}
+
+// The deadline is per recv rather than per connection, which is what leaves a slow drip unbounded: every byte that
+// arrives buys the sender the whole interval again.
+TEST(SocketReceiveTimeout, StartsOverWheneverAByteArrives) {
+    auto pair = connected_pair();
+    ASSERT_TRUE(pair.first.set_receive_timeout(std::chrono::milliseconds(80)));
+
+    std::thread drip([&pair] {
+        for (int i = 0; i < 3; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(40));
+            EXPECT_TRUE(pair.second.write("x"));
+        }
+    });
+
+    std::array<char, 64> buf{};
+    for (int i = 0; i < 3; ++i) {
+        const ReadResult result = pair.first.read(buf.data(), buf.size());
+        EXPECT_TRUE(result) << "read " << i << " errno " << result.os_error;
+    }
+    drip.join();
+}
+
 }  // namespace

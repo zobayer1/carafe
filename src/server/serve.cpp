@@ -24,6 +24,10 @@ namespace carafe::server {
 // waiting on the clock.
 constexpr auto accept_retry_pause = std::chrono::milliseconds(10);
 
+// Arbitrary, like the drain ceiling: long enough not to cut a slow client off mid-request, short enough that a
+// connection nobody is using stops holding a thread and a descriptor.
+constexpr auto receive_timeout = std::chrono::seconds(30);
+
 namespace {
 
 // No default label, so a new enumerator breaks this build rather than becoming a silent 400.
@@ -47,6 +51,11 @@ int status_for(http::RequestError error) {
             break;
     }
     return 400;
+}
+
+// One value on Linux, and not required to be.
+[[nodiscard]] bool timed_out(int os_error) noexcept {
+    return os_error == EAGAIN || os_error == EWOULDBLOCK;
 }
 
 // RFC 9110 §7.6.1: a comma-separated list of case-insensitive connection options. §5.3 folds a repeated field into one
@@ -172,6 +181,11 @@ void serve_connection(Connection& conn, const Router& router) {
         if (!result) {
             // A read failure gets no reply because nobody is listening.
             if (result.os_error != 0) {
+                // A deadline that fired with a request half-received is a client that asked and heard nothing back.
+                // Any other read failure, and an idle connection, has nobody to tell.
+                if (timed_out(result.os_error) && conn.request_in_progress()) {
+                    static_cast<void>(answer(conn, status_response(408), true, true));
+                }
                 return;
             }
 
@@ -219,6 +233,12 @@ void serve_forever(net::Listener& listener, const std::shared_ptr<const Router>&
                 case AcceptRetry::Immediately:
                     break;
             }
+            continue;
+        }
+
+        // Refused rather than served: a connection whose reads cannot be bounded is exactly the one that holds a
+        // thread for ever.
+        if (!accepted.client->set_receive_timeout(receive_timeout)) {
             continue;
         }
 

@@ -283,9 +283,26 @@ Both answer `200`. Served one at a time, the second would have waited for as lon
 as the first cared to hold on, which is not long enough for a browser to be the
 first.
 
-What is not bounded is how many threads there are. A client that connects and
-sends nothing holds one until it hangs up, and nothing times it out, so the limit
-is the process descriptor limit rather than anything this server decides.
+A connection that goes quiet is not held for ever: every read carries a deadline,
+and a connection that says nothing for thirty seconds is closed. If half a request
+had arrived, the client is told why:
+
+```console
+$ { printf 'GET /hel'; sleep 40; } | nc localhost 8080
+HTTP/1.1 408 Request Timeout
+connection: close
+```
+
+The `sleep` is what makes this work. Piping `printf` straight into `nc` closes the
+sending side as soon as the bytes are out, and a client that closed is one that
+finished rather than one that stalled, so the server hangs up without a word.
+
+A connection that had finished its last request and simply went idle is closed
+without a reply, because a client that asked for nothing is owed nothing.
+
+What is still unbounded is how many threads there are, and how slowly a client may
+feed a request it never finishes. The deadline is per read, so a byte every twenty
+seconds resets it indefinitely.
 
 Reaching that limit is survivable but not comfortable. Accepting fails with
 `EMFILE`, the loop waits and asks again, and the server serves normally the moment

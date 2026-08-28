@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <optional>
 #include <string_view>
@@ -54,6 +55,10 @@ public:
 
     // Every byte or a failure: EINTR is retried, so a short write never surfaces.
     [[nodiscard]] WriteResult write(std::string_view bytes);
+
+    // A deadline on each recv, after which read() reports EAGAIN rather than waiting on. False when the socket refused
+    // it, which leaves the caller a connection whose reads it cannot bound.
+    [[nodiscard]] bool set_receive_timeout(std::chrono::milliseconds limit) noexcept;
 
 private:
     int fd_ = -1;
