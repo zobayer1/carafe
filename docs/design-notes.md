@@ -1233,9 +1233,57 @@ and the suite went from one second to ninety-two. Tests that pass for the wrong
 reason are quiet until something makes them loud.
 
 The send side gets the same deadline for the same reason, since a client that
-stops reading holds a thread just as well as one that stops writing. It is not
-quite the equal of the receive side: `Socket::write` loops over partial sends and
-each `send` takes the deadline afresh, so a peer reading very slowly can still
-stretch a response larger than the socket buffer. Closing that means the write
-loop carrying a deadline of its own, which is the same surgery again in the other
-direction, and it waits.
+stops reading holds a thread just as well as one that stops writing.
+
+## A short write is what the deadline was waiting for
+
+`Socket::write` loops, because a partial send is an obligation to send the rest.
+Bounding it with `SO_SNDTIMEO` bounds one `send`, and the loop then hands the next
+one the whole limit again. That is the receive drip in the other direction, and it
+was left standing when the request deadline landed.
+
+It hides well, because a blocking `send` almost never comes back short. It does
+not return once it has written what it can; it waits until the whole buffer is
+queued. Two things cut it short: a signal, and its own deadline firing after it
+has already moved bytes. The second is the one that matters, since the loop's own
+bound is what sends the loop round again. Against a peer draining 64 KiB every
+20 ms, a four megabyte write bounded at 100 ms took fifty one rounds and 5.15
+seconds.
+
+None of that is visible over a socketpair. `AF_UNIX` takes a whole payload into a
+single `send`, so the loop runs once and a deadline on the loop cannot be told
+apart from a deadline on the send. Reproducing it needs a loopback TCP pair with
+`SO_SNDBUF` and `SO_RCVBUF` pinned small, which is the one place in the suite
+where the transport has to be real. A first attempt at the test used a socketpair
+and a peer sipping eight bytes at a time, and proved nothing twice over: the loop
+never went round, and the sips were too small to wake the sender anyway, so the
+per-send deadline answered for it.
+
+So the deadline is fixed at the first send, and each round is handed what is left
+of it. The clamp both sides need is now `milliseconds_until` in `net`, which
+reports nothing when under a millisecond remains. The zero `timeval` rule is a
+fact about sockets and reads better beside them than inside `Connection`.
+
+`set_send_timeout` went with it. `write` sets `SO_SNDTIMEO` itself, once a round,
+and a setter whose only remaining callers were its own tests is not an API. The
+asymmetry with `set_receive_timeout`, which stays, is a real difference rather
+than an oversight: `read` hands back one buffer per call, so the caller must loop
+regardless, and only the caller knows when a request began. `write` is given the
+whole response at once, so the deadline covers exactly one call and belongs
+inside it.
+
+The cost is one `setsockopt` per round. For a response that fits in the socket
+buffers, which is nearly all of them, that is one extra syscall per response.
+
+What is left is smaller and harder to see. Handing each round the remainder stops
+a send from overshooting by more than the tail of one round, but a send starting
+just before the deadline still runs to its own limit, so a write bounded at 100 ms
+can take close to 200 ms in the worst case. That is the whole difference between
+passing the remainder and passing the full limit, and no test pins it: reaching it
+needs a send that begins in the last microseconds of the deadline.
+
+The write deadline is still the request deadline. Pinning the expired branch on
+the read side showed why that will not hold for ever, since a zero request
+deadline leaves the response unwritable when the same number bounds the write.
+Nothing asks for a zero deadline today, so the third deadline still waits, but it
+has a second argument behind it now.

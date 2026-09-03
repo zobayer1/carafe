@@ -29,6 +29,14 @@ namespace {
 
 }  // namespace
 
+std::optional<std::chrono::milliseconds> milliseconds_until(std::chrono::steady_clock::time_point deadline) {
+    const auto left = deadline - std::chrono::steady_clock::now();
+    if (left < std::chrono::milliseconds(1)) {
+        return std::nullopt;
+    }
+    return std::chrono::duration_cast<std::chrono::milliseconds>(left);
+}
+
 // Linux releases the descriptor even when close() reports EINTR, so retrying would close whatever another thread has
 // since opened into the slot.
 Socket::~Socket() {
@@ -73,8 +81,18 @@ ReadResult Socket::read(char* buffer, std::size_t size) {
 }
 
 // NOLINTNEXTLINE(readability-make-member-function-const)
-WriteResult Socket::write(std::string_view bytes) {
+WriteResult Socket::write(std::string_view bytes, std::chrono::milliseconds limit) {
+    const auto deadline = std::chrono::steady_clock::now() + limit;
+
     while (!bytes.empty()) {
+        const auto left = milliseconds_until(deadline);
+        if (!left) {
+            return {ETIMEDOUT};
+        }
+        if (const int refused = set_timeout(fd_, SO_SNDTIMEO, *left); refused != 0) {
+            return {refused};
+        }
+
         const ssize_t written = ::send(fd_, bytes.data(), bytes.size(), MSG_NOSIGNAL);
         if (written == -1) {
             // EINTR is an interruption, not an outcome: ask again.
@@ -92,11 +110,6 @@ WriteResult Socket::write(std::string_view bytes) {
 // NOLINTNEXTLINE(readability-make-member-function-const)
 int Socket::set_receive_timeout(std::chrono::milliseconds limit) noexcept {
     return set_timeout(fd_, SO_RCVTIMEO, limit);
-}
-
-// NOLINTNEXTLINE(readability-make-member-function-const)
-int Socket::set_send_timeout(std::chrono::milliseconds limit) noexcept {
-    return set_timeout(fd_, SO_SNDTIMEO, limit);
 }
 
 }  // namespace carafe::net

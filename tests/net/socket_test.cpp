@@ -1,21 +1,28 @@
 #include "net/socket.hpp"
 
 #include "alarm.hpp"
+#include "net/listener.hpp"
 
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <fcntl.h>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
+#include <arpa/inet.h>
 #include <gtest/gtest.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 
 namespace {
 
+using carafe::net::milliseconds_until;
 using carafe::net::ReadResult;
 using carafe::net::Socket;
 using carafe::net::WriteResult;
@@ -41,6 +48,43 @@ std::pair<Socket, Socket> connected_pair() {
     std::array<int, 2> fds{-1, -1};
     EXPECT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds.data()), 0);
     return {Socket{fds[0]}, Socket{fds[1]}};
+}
+
+// Long enough that a write bounded by it is bounded by nothing these tests are about. The deadline tests name their
+// own.
+constexpr auto no_hurry = std::chrono::seconds(5);
+
+// A connected pair over the loopback, with the buffers pinned small so a slow reader holds the sender back. A
+// socketpair cannot stand in here: AF_UNIX takes a whole payload into a single send, so the write loop never goes round
+// twice and a deadline on the loop cannot be told apart from a deadline on one send. Invalid sockets mean the setup
+// failed, which the caller checks before relying on either.
+std::pair<Socket, Socket> loopback_pair() {
+    auto listening = carafe::net::listen_on(0);
+    if (!listening) {
+        return {Socket{-1}, Socket{-1}};
+    }
+
+    Socket client{::socket(AF_INET, SOCK_STREAM, 0)};
+    const int small = 16 * 1024;
+    EXPECT_EQ(::setsockopt(client.get(), SOL_SOCKET, SO_RCVBUF, &small, sizeof(small)), 0);
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(listening.listener->port());
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    const void* addr_ptr = &addr;
+    if (::connect(client.get(), static_cast<const sockaddr*>(addr_ptr), sizeof(addr)) != 0) {
+        return {Socket{-1}, Socket{-1}};
+    }
+
+    auto accepted = listening.listener->accept();
+    if (!accepted) {
+        return {Socket{-1}, Socket{-1}};
+    }
+    EXPECT_EQ(::setsockopt(accepted.client->get(), SOL_SOCKET, SO_SNDBUF, &small, sizeof(small)), 0);
+
+    return {std::move(client), std::move(*accepted.client)};
 }
 
 // Distinctive content, so a prefix sent twice shows up as a mismatch instead of as bytes that happen to look right.
@@ -301,7 +345,7 @@ TEST(SocketRead, KeepsWaitingWhenASignalInterruptsIt) {
 TEST(SocketWrite, SendsEveryByte) {
     auto [reader, writer] = connected_pair();
 
-    ASSERT_TRUE(writer.write("hello"));
+    ASSERT_TRUE(writer.write("hello", no_hurry));
 
     std::array<char, 64> buf{};
     const auto result = reader.read(buf.data(), buf.size());
@@ -314,7 +358,7 @@ TEST(SocketWrite, SendsEveryByte) {
 TEST(SocketWrite, SucceedsWithoutSendingAnythingWhenGivenNoBytes) {
     auto [reader, writer] = connected_pair();
 
-    EXPECT_TRUE(writer.write(""));
+    EXPECT_TRUE(writer.write("", no_hurry));
 
     char byte = 0;
     EXPECT_EQ(::recv(reader.get(), &byte, 1, MSG_DONTWAIT), ssize_t{-1});
@@ -327,7 +371,7 @@ TEST(SocketWrite, ReportsBrokenPipeWhenThePeerIsGone) {
     auto [reader, writer] = connected_pair();
     reader = Socket{-1};
 
-    const auto result = writer.write("anyone there?");
+    const auto result = writer.write("anyone there?", no_hurry);
 
     EXPECT_FALSE(result);
     EXPECT_EQ(result.os_error, EPIPE);
@@ -337,7 +381,7 @@ TEST(SocketWrite, ReportsBrokenPipeWhenThePeerIsGone) {
 TEST(SocketWrite, ReportsTheErrnoWhenTheDescriptorIsInvalid) {
     Socket sock{-1};
 
-    const auto result = sock.write("x");
+    const auto result = sock.write("x", no_hurry);
 
     EXPECT_FALSE(result);
     EXPECT_EQ(result.os_error, EBADF);
@@ -355,7 +399,7 @@ TEST(SocketWrite, SendsMoreThanTheSocketBufferHolds) {
     std::string received;
     std::thread sink([&reader, &received, size = payload.size()] { received = drain(reader, size); });
 
-    const auto result = writer.write(payload);
+    const auto result = writer.write(payload, no_hurry);
     sink.join();
 
     ASSERT_TRUE(result);
@@ -383,7 +427,7 @@ TEST(SocketWrite, ResumesFromWhereASignalStoppedIt) {
     WriteResult result;
     {
         const AlarmIn alarm(50000);
-        result = writer.write(payload);
+        result = writer.write(payload, no_hurry);
     }
     sink.join();
 
@@ -416,7 +460,7 @@ TEST(SocketWrite, RetriesWhenASignalArrivesBeforeAnyByteMoves) {
     WriteResult result;
     {
         const AlarmIn alarm(50000);
-        result = writer.write("!");
+        result = writer.write("!", no_hurry);
     }
     sink.join();
 
@@ -452,7 +496,7 @@ TEST(SocketReceiveTimeout, ReportsFailureWhenTheDescriptorIsInvalid) {
 TEST(SocketReceiveTimeout, LeavesAReadWithBytesWaitingAlone) {
     auto pair = connected_pair();
     ASSERT_EQ(pair.first.set_receive_timeout(std::chrono::milliseconds(50)), 0);
-    ASSERT_TRUE(pair.second.write("hi"));
+    ASSERT_TRUE(pair.second.write("hi", no_hurry));
 
     std::array<char, 64> buf{};
     const ReadResult result = pair.first.read(buf.data(), buf.size());
@@ -470,7 +514,7 @@ TEST(SocketReceiveTimeout, StartsOverWheneverAByteArrives) {
     std::thread drip([&pair] {
         for (int i = 0; i < 3; ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(40));
-            EXPECT_TRUE(pair.second.write("x"));
+            EXPECT_TRUE(pair.second.write("x", no_hurry));
         }
     });
 
@@ -484,21 +528,68 @@ TEST(SocketReceiveTimeout, StartsOverWheneverAByteArrives) {
 
 // The mirror of the receive deadline: a peer that stops reading fills the buffers and then holds the sender for as long
 // as it likes, which is a thread held by someone sending nothing at all.
-TEST(SocketSendTimeout, ReportsEagainWhenThePeerStopsReading) {
+TEST(SocketSendTimeout, GivesUpWhenThePeerStopsReading) {
     auto pair = connected_pair();
-    ASSERT_EQ(pair.first.set_send_timeout(std::chrono::milliseconds(50)), 0);
 
     // Far more than any socket buffer holds, with nobody on the other end reading a byte of it.
     const std::string more_than_fits(std::size_t{4} * 1024 * 1024, 'x');
-    const WriteResult result = pair.first.write(more_than_fits);
+    const auto started = std::chrono::steady_clock::now();
+    const WriteResult result = pair.first.write(more_than_fits, std::chrono::milliseconds(50));
 
     EXPECT_FALSE(result);
-    EXPECT_TRUE(result.os_error == EAGAIN || result.os_error == EWOULDBLOCK) << "errno " << result.os_error;
+    EXPECT_TRUE(result.os_error == EAGAIN || result.os_error == EWOULDBLOCK || result.os_error == ETIMEDOUT)
+        << "errno " << result.os_error;
+    EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(1));
 }
 
-TEST(SocketSendTimeout, ReportsFailureWhenTheDescriptorIsInvalid) {
-    Socket empty{-1};
-    EXPECT_EQ(empty.set_send_timeout(std::chrono::milliseconds(50)), EBADF);
+// What a per-send deadline leaves unbounded. A blocking send comes back short only when something interrupts it after
+// it has moved bytes, and its own deadline firing is exactly that: the write loop goes round, hands the next send the
+// whole limit again, and a peer draining steadily but slowly renews it for as long as it likes. Measuring from the
+// first send is what ends it.
+TEST(SocketSendTimeout, GivesUpWhenThePeerDrainsTooSlowly) {
+    auto pair = loopback_pair();
+    Socket& reader = pair.first;
+    Socket& writer = pair.second;
+    ASSERT_TRUE(reader.valid() && writer.valid());
+
+    std::atomic<bool> reading{true};
+    std::thread sipper([&reader, &reading] {
+        std::vector<char> buf(std::size_t{64} * 1024);
+        while (reading) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            static_cast<void>(::recv(reader.get(), buf.data(), buf.size(), MSG_DONTWAIT));
+        }
+    });
+
+    const std::string more_than_fits(std::size_t{2} * 1024 * 1024, 'x');
+    const auto started = std::chrono::steady_clock::now();
+    const WriteResult result = writer.write(more_than_fits, std::chrono::milliseconds(100));
+    const auto took = std::chrono::steady_clock::now() - started;
+
+    reading = false;
+    sipper.join();
+
+    EXPECT_FALSE(result);
+    EXPECT_LT(took, std::chrono::seconds(1)) << "the write outlived the deadline it was given";
+}
+
+// Nothing rather than zero, because a zero timeval asks setsockopt for no deadline at all: the last fraction of a
+// millisecond would become an unbounded wait.
+TEST(MillisecondsUntil, ReportsNothingWhenUnderAMillisecondIsLeft) {
+    EXPECT_FALSE(milliseconds_until(std::chrono::steady_clock::now() + std::chrono::microseconds(200)).has_value());
+}
+
+TEST(MillisecondsUntil, ReportsNothingWhenTheDeadlineHasPassed) {
+    EXPECT_FALSE(milliseconds_until(std::chrono::steady_clock::now() - std::chrono::seconds(1)).has_value());
+}
+
+// Rounded down, so what setsockopt is handed never reaches past the deadline it came from.
+TEST(MillisecondsUntil, ReportsWhatIsLeftOfTheDeadline) {
+    const auto left = milliseconds_until(std::chrono::steady_clock::now() + std::chrono::milliseconds(500));
+
+    ASSERT_TRUE(left.has_value());
+    EXPECT_GT(*left, std::chrono::milliseconds(400));
+    EXPECT_LE(*left, std::chrono::milliseconds(500));
 }
 
 }  // namespace

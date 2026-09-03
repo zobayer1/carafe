@@ -50,27 +50,18 @@ ConnectionResult Connection::next_request() {
 }
 
 net::WriteResult Connection::write(std::string_view bytes) {
-    // The same patience as receiving, since it is the same client either way. A third deadline is the honest split
-    // the moment they should differ.
-    if (const int refused = socket_.set_send_timeout(deadlines_.request); refused != 0) {
-        return {refused};
-    }
-    return socket_.write(bytes);
+    return socket_.write(bytes, deadlines_.request);
 }
 
 int Connection::apply_read_deadline() {
     auto limit = deadlines_.idle;
 
     if (request_in_progress_) {
-        const auto left = request_deadline_ - std::chrono::steady_clock::now();
-
-        // Under a millisecond is no time left at all. Rounding it down instead would hand SO_RCVTIMEO a zero timeval,
-        // which means no deadline rather than an immediate one, and turn the last instant of one into a wait forever.
-        if (left < std::chrono::milliseconds(1)) {
+        const auto left = net::milliseconds_until(request_deadline_);
+        if (!left) {
             return ETIMEDOUT;
         }
-
-        limit = std::chrono::duration_cast<std::chrono::milliseconds>(left);
+        limit = *left;
     }
 
     return socket_.set_receive_timeout(limit);

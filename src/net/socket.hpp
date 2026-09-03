@@ -29,6 +29,11 @@ struct WriteResult {
     }
 };
 
+// Milliseconds until `deadline`, or nothing when less than one remains. Nothing means out of time: rounding the last
+// fraction down would hand setsockopt a zero timeval, which asks for no deadline rather than an immediate one.
+[[nodiscard]] std::optional<std::chrono::milliseconds> milliseconds_until(
+    std::chrono::steady_clock::time_point deadline);
+
 // Sole owner of one file descriptor, closed exactly once when the Socket dies. An empty Socket holds -1 and owns
 // nothing.
 class Socket {
@@ -55,16 +60,14 @@ public:
     // Up to `size` bytes into the caller's buffer. The view in the result points into that buffer and dies with it.
     [[nodiscard]] ReadResult read(char* buffer, std::size_t size);
 
-    // Every byte or a failure: EINTR is retried, so a short write never surfaces on its own. A send deadline can
-    // stop one part-way, which is the only case where some bytes went and the result says failure.
-    [[nodiscard]] WriteResult write(std::string_view bytes);
+    // Every byte or a failure. EINTR is retried and a partial send is resumed, so a short write never surfaces on its
+    // own. `limit` bounds the whole call rather than each send: a peer reading a trickle at a time renews a per-send
+    // deadline forever.
+    [[nodiscard]] WriteResult write(std::string_view bytes, std::chrono::milliseconds limit);
 
     // A deadline on each recv, after which read() reports EAGAIN rather than waiting on. Zero on success, otherwise the
     // errno the socket refused with: a caller that cannot bound its reads needs the reason, not only the fact.
     [[nodiscard]] int set_receive_timeout(std::chrono::milliseconds limit) noexcept;
-
-    // The same for send, so a peer that stops reading cannot hold a thread in write().
-    [[nodiscard]] int set_send_timeout(std::chrono::milliseconds limit) noexcept;
 
 private:
     int fd_ = -1;

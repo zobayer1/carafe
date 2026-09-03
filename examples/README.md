@@ -317,8 +317,11 @@ HTTP/1.1 408 Request Timeout
 
 A client that stops *reading* is bounded by the same deadline applied to sending,
 so a response too large to sit in the socket buffers cannot hold a thread while
-nobody collects it. A response small enough to fit is already gone by the time the
-client ignores it, and holds nothing.
+nobody collects it. Neither can a client that reads just enough to keep the sender
+going: the deadline covers the whole response rather than each send, so taking it
+a sip at a time buys no more time than refusing it outright. A response small
+enough to fit is already gone by the time the client ignores it, and holds
+nothing.
 
 What is still unbounded is how many threads there are. Nothing caps the count, so
 the ceiling is the process descriptor limit rather than anything this server

@@ -4,6 +4,7 @@
 #include "net/socket.hpp"
 
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
@@ -43,6 +44,37 @@ void send_all(const Socket& sock, std::string_view bytes) {
 
 constexpr std::string_view get_root = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
 constexpr std::string_view no_content = "HTTP/1.1 204 No Content\r\n\r\n";
+
+// Nothing left of the request deadline is the one place where the time remaining is not a limit to hand the socket. A
+// zero timeval there asks for no deadline at all rather than an immediate one, which would leave the read that had just
+// run out of time waiting for ever. A deadline that expires the moment it is set is what reaches this, since a read
+// granted the last of the time is cut off by the socket first. The read runs on its own thread because waiting for ever
+// is precisely the failure being ruled out.
+TEST(Connection, ReportsATimeoutWhenNothingIsLeftOfTheRequestDeadline) {
+    constexpr carafe::server::Deadlines already_over{std::chrono::seconds(5), std::chrono::milliseconds(0)};
+    auto pair = connected_pair();
+    send_all(pair.first, "GET /par");
+
+    carafe::server::ConnectionResult result;
+    std::atomic<bool> returned{false};
+    std::thread reading([client = std::move(pair.second), &result, &returned]() mutable {
+        Connection conn{std::move(client), already_over};
+        result = conn.next_request();
+        returned = true;
+    });
+
+    for (int waited = 0; waited < 100 && !returned; ++waited) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    const bool returned_unprompted = returned;
+
+    // Hanging up releases a read that was given no deadline, so what follows is reported rather than waited on.
+    static_cast<void>(::shutdown(pair.first.get(), SHUT_WR));
+    reading.join();
+
+    EXPECT_TRUE(returned_unprompted) << "the read carried no deadline, so only the hang-up ended it";
+    EXPECT_EQ(result.os_error, ETIMEDOUT);
+}
 
 TEST(Connection, ReturnsTheRequestOnceTheHeadIsComplete) {
     auto pair = connected_pair();
