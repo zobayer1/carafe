@@ -1287,3 +1287,46 @@ the read side showed why that will not hold for ever, since a zero request
 deadline leaves the response unwritable when the same number bounds the write.
 Nothing asks for a zero deadline today, so the third deadline still waits, but it
 has a second argument behind it now.
+
+## A bounded pool is the outage again with a number on it
+
+A thread per connection has no ceiling of its own. It borrows one, and the one it
+borrows is the process descriptor limit, which nothing here chose. A pool replaces
+that with a number the server picks.
+
+The ordering mattered more than the pool did. A bounded pool without deadlines is
+the original one-slow-client outage with a smaller number attached: sixty four
+clients that say nothing hold sixty four workers for as long as they care to, and
+everyone else waits. That is why the deadlines went in first and why the pool
+takes them as a constructor argument, so every connection it builds is bounded by
+the same policy.
+
+One worker serves a whole connection rather than one request. A keep-alive client
+therefore holds its worker until it goes away or a deadline fires, so a full pool
+does not mean requests are queueing behind each other. It means no new client is
+served until an existing one ends. That is the head of the line blocking the rest
+of it, and the queue deadline exists to bound how long anyone waits in it: a
+connection that sat there longer than the limit is dropped when a worker finally
+reaches it, because a client that gave up is a worker spent on nobody.
+
+The queue is much larger than the worker count on purpose. Workers bound what is
+being served; the queue absorbs the arrivals that land while they are busy. Past
+the queue there is nothing left to do but close the connection as it arrives. A
+`503` would be the better answer, but the send would happen on the accept thread,
+and blocking there is the outage three commits went into removing. There is no
+non-blocking write to do it with, so rejection is a close, and the status waits
+for one.
+
+Two things about stopping are easy to get backwards. Queued connections are
+dropped rather than worked through, because a server that is going down owes
+nobody a reply it will not be around to follow. And a worker already inside a
+connection finishes it, so joining can take as long as one live connection lasts.
+Both are worth knowing before writing a test: three of the pool tests failed on
+the first run because they submitted a connection and destroyed the pool in the
+next statement, and stopping dropped it before any worker got there.
+
+Starting the workers has one hazard. A constructor that throws has no destructor,
+so a `std::system_error` from the fifth thread would leave four running with a
+vector destroyed under them, which is a call to `std::terminate`. Failing to start
+a worker is treated the way a failed accept is: keep what is running, serve with a
+smaller pool than asked for, and carry on.

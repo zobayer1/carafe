@@ -323,10 +323,28 @@ a sip at a time buys no more time than refusing it outright. A response small
 enough to fit is already gone by the time the client ignores it, and holds
 nothing.
 
-What is still unbounded is how many threads there are. Nothing caps the count, so
-the ceiling is the process descriptor limit rather than anything this server
-chooses, and that is what the thread pool in the
-[roadmap](../README.md#roadmap) is for.
+How many threads there are is bounded too. A fixed pool of workers takes accepted
+connections off a queue, so the count is chosen rather than discovered, and it
+does not move when clients arrive:
+
+```console
+$ ./build/debug/bin/hello &
+$ ls /proc/$!/task | wc -l
+65
+$ # 80 connections, each sending a partial head and then holding on
+$ ls /proc/$!/task | wc -l
+65
+```
+
+Sixty five is the main thread and sixty four workers. One worker serves a whole
+connection rather than one request, so a client holding a keep-alive connection
+holds a worker with it. Past sixty four, connections wait in the queue; past the
+queue, they are closed as they arrive rather than held. A connection that waited
+in the queue longer than the queue deadline is dropped when a worker finally
+reaches it, on the grounds that the client has very likely gone.
+
+Neither bound is reachable from `App::run`, which takes only a port. Serving with
+a different pool size means calling `serve_forever` directly for now.
 
 Reaching that limit is survivable but not comfortable. Accepting fails with
 `EMFILE`, the loop waits and asks again, and the server serves normally the moment
@@ -342,6 +360,6 @@ after they hang up      200
 
 The middle row is the honest part: the server is alive throughout, and unable to
 answer anyone while every descriptor is held by a client that will not let go.
-Getting those descriptors back without waiting for the client to relent is what
-the pool and idle-timeout milestone in the [roadmap](../README.md#roadmap) is
-for.
+The deadlines are what get those descriptors back without waiting for the client
+to relent. The pool bounds threads, not descriptors: a connection sitting in the
+queue still holds one.

@@ -149,7 +149,7 @@ make PRESET=release test
 - [x] Concurrency: a thread per connection, detached
 - [x] Concurrency: a receive deadline, so an idle connection stops holding a thread
 - [x] Concurrency: a deadline on a whole request, and on writing a response
-- [ ] Concurrency: a thread pool, to bound how many connections may be held at once
+- [x] Concurrency: a thread pool, to bound how many connections may be held at once
 - [ ] Middleware
 - [x] Keep-alive: the `Connection` field and the version's own default
 - [x] Chunked transfer encoding: chunk framing, extensions, and a dropped trailer section

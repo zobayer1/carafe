@@ -7,6 +7,7 @@
 #include "http/field_list.hpp"
 #include "http/request_reader.hpp"
 #include "server/connection.hpp"
+#include "server/pool.hpp"
 #include "server/router.hpp"
 
 #include <cerrno>
@@ -14,7 +15,6 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -217,7 +217,9 @@ void serve_connection(Connection& conn, const Router& router) {
     }
 }
 
-void serve_forever(net::Listener& listener, const std::shared_ptr<const Router>& router) {
+void serve_forever(net::Listener& listener, const std::shared_ptr<const Router>& router, PoolLimits limits) {
+    ConnectionPool pool{router, limits};
+
     while (true) {
         auto accepted = listener.accept();
         if (!accepted.client.has_value()) {
@@ -233,19 +235,7 @@ void serve_forever(net::Listener& listener, const std::shared_ptr<const Router>&
             continue;
         }
 
-        // One thread each, so a client holding a persistent connection open cannot keep every other client waiting.
-        // The router goes in by value: a detached thread may outlive the App that registered the routes.
-        try {
-            std::thread([client = std::move(*accepted.client), router]() mutable {
-                Connection conn{std::move(client)};
-                serve_connection(conn, *router);
-            }).detach();
-        } catch (const std::system_error&) {
-            // Out of threads. The client is dropped as the socket goes down with the lambda that failed to launch:
-            // serving it here would block every accept behind it, and letting this escape would take the connections
-            // already in flight with it.
-            continue;
-        }
+        pool.submit(std::move(*accepted.client));
     }
 }
 
