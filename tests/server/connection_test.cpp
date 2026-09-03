@@ -42,6 +42,11 @@ void send_all(const Socket& sock, std::string_view bytes) {
     EXPECT_EQ(::send(sock.get(), bytes.data(), bytes.size(), 0), static_cast<ssize_t>(bytes.size()));
 }
 
+// A request deadline that has expired by the time it is looked at, which is the only way to reach a read with nothing
+// left of one. Namespace scope because a thread body reads it, and a local constexpr would have to be captured to be
+// read there.
+constexpr carafe::server::Deadlines already_over{std::chrono::seconds(5), std::chrono::milliseconds(0)};
+
 constexpr std::string_view get_root = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
 constexpr std::string_view no_content = "HTTP/1.1 204 No Content\r\n\r\n";
 
@@ -51,7 +56,6 @@ constexpr std::string_view no_content = "HTTP/1.1 204 No Content\r\n\r\n";
 // granted the last of the time is cut off by the socket first. The read runs on its own thread because waiting for ever
 // is precisely the failure being ruled out.
 TEST(Connection, ReportsATimeoutWhenNothingIsLeftOfTheRequestDeadline) {
-    constexpr carafe::server::Deadlines already_over{std::chrono::seconds(5), std::chrono::milliseconds(0)};
     auto pair = connected_pair();
     send_all(pair.first, "GET /par");
 
