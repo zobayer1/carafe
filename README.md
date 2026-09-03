@@ -32,7 +32,7 @@ app.run(8080);
 ```
 
 `make run` serves the whole example on port 8080. See
-[docs/examples.md](docs/examples.md) for every route it registers, and for what
+[examples/README.md](examples/README.md) for every route it registers, and for what
 each kind of body does to the connection.
 
 ## Goals

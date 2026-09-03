@@ -1,5 +1,5 @@
 // The smallest thing that proves the socket, the parser, the router and the responder are joined up, plus enough routes
-// to drive a body through by hand. docs/examples.md walks through what each one answers.
+// to drive a body through by hand. examples/README.md walks through what each one answers.
 //
 // Each connection is served on its own thread, so a browser holding a persistent one open no longer keeps anyone else
 // waiting. Nothing bounds how many: a client that connects and stays silent holds a thread until it hangs up, which is
@@ -100,7 +100,7 @@ int main() {
               << "/hello/world"
               << "\n      curl -i --data 'hi' http://localhost:" << port << "/echo"
               << "\n      curl -i -X PUT --data 'v' http://localhost:" << port << "/store/k"
-              << "\n      see docs/examples.md for the rest\n"
+              << "\n      see examples/README.md for the rest\n"
               << std::flush;
 
     if (!app.run(port)) {
