@@ -1,3 +1,4 @@
+#include <carafe/config.hpp>
 #include <carafe/http/handler.hpp>
 #include <carafe/http/request.hpp>
 #include <carafe/http/response.hpp>
@@ -8,10 +9,12 @@
 #include "server/serve.hpp"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -27,6 +30,8 @@
 
 namespace {
 
+using carafe::Deadlines;
+using carafe::PoolLimits;
 using carafe::http::Method;
 using carafe::http::Request;
 using carafe::http::text_response;
@@ -54,6 +59,12 @@ Socket connect_to(std::uint16_t port) {
     return client;
 }
 
+void set_read_deadline(const Socket& sock, std::chrono::milliseconds limit) {
+    const timeval deadline{static_cast<time_t>(limit.count() / 1000),
+                           static_cast<suseconds_t>((limit.count() % 1000) * 1000)};
+    EXPECT_EQ(::setsockopt(sock.get(), SOL_SOCKET, SO_RCVTIMEO, &deadline, sizeof(deadline)), 0);
+}
+
 void send_all(const Socket& sock, std::string_view bytes) {
     while (!bytes.empty()) {
         const ssize_t sent = ::send(sock.get(), bytes.data(), bytes.size(), MSG_NOSIGNAL);
@@ -79,13 +90,13 @@ std::string status_line(const Socket& sock) {
 // here would mean giving Listener a close() whose only caller is this file. A thread parked in accept() costs nothing
 // at exit. The listener moves into the thread rather than being leaked beside it, so nothing out here outlives what
 // the thread is still using.
-std::uint16_t start_server(std::shared_ptr<Router> router) {
+std::uint16_t start_server(std::shared_ptr<Router> router, PoolLimits limits = {}, Deadlines deadlines = {}) {
     auto result = listen_on(0);
     EXPECT_TRUE(result.listener.has_value());
     const std::uint16_t port = result.listener->port();
 
-    std::thread([listener = std::move(*result.listener), router = std::move(router)]() mutable {
-        serve_forever(listener, router);
+    std::thread([listener = std::move(*result.listener), router = std::move(router), limits, deadlines]() mutable {
+        serve_forever(listener, router, limits, deadlines);
     }).detach();
 
     return port;
@@ -184,6 +195,59 @@ TEST(ServeForever, KeepsEachConnectionsParserSeparate) {
 
     EXPECT_EQ(status_line(first), "HTTP/1.1 200 OK");
     EXPECT_EQ(status_line(second), "HTTP/1.1 200 OK");
+}
+
+// The limits are the server's, not the pool's alone: reaching serve_forever with them dropped would leave the default
+// sixty four workers, and the second client would be answered while the first handler is still inside.
+//
+// The first request says `Connection: close` so its worker is freed by the response rather than held for the whole
+// idle deadline. One worker serving a whole connection is the head-of-line cost the queue exists to bound.
+TEST(ServeForever, ServesNoMoreAtOnceThanItsLimitsAllow) {
+    auto release = std::make_shared<std::promise<void>>();
+    const std::shared_future<void> held = release->get_future().share();
+    auto entered = std::make_shared<std::atomic<bool>>(false);
+
+    auto router = std::make_shared<Router>();
+    router->add(Method::Get, "/hold", [held, entered](const Request&) {
+        *entered = true;
+        held.wait();
+        return text_response(200, "");
+    });
+    router->add(Method::Get, "/hello", echo());
+    const std::uint16_t port = start_server(router, PoolLimits{1, 8, std::chrono::seconds(5)});
+
+    const Socket first = connect_to(port);
+    send_all(first, "GET /hold HTTP/1.1\r\nHost: a.test\r\nConnection: close\r\n\r\n");
+    for (int waited = 0; waited < 1000 && !*entered; ++waited) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    ASSERT_TRUE(*entered) << "the only worker never picked up the first connection";
+
+    // Answered in a moment by any server with a spare worker, and this one has none.
+    const Socket second = connect_to(port);
+    send_all(second, "GET /hello HTTP/1.1\r\nHost: b.test\r\n\r\n");
+    set_read_deadline(second, std::chrono::milliseconds(300));
+    EXPECT_EQ(status_line(second), "") << "the one worker was still inside the first handler";
+
+    release->set_value();
+    EXPECT_EQ(status_line(first), "HTTP/1.1 200 OK");
+    set_read_deadline(second, std::chrono::seconds(5));
+    EXPECT_EQ(status_line(second), "HTTP/1.1 200 OK");
+}
+
+// The deadlines have further to travel than the limits: serve_forever hands them to the pool, which hands them to each
+// Connection it builds. A half-sent head answered rather than waited out is the whole chain arriving.
+TEST(ServeForever, AppliesTheDeadlinesItWasGiven) {
+    auto router = std::make_shared<Router>();
+    router->add(Method::Get, "/hello", echo());
+    const std::uint16_t port =
+        start_server(router, PoolLimits{}, Deadlines{std::chrono::milliseconds(50), std::chrono::milliseconds(50)});
+
+    const Socket client = connect_to(port);
+    send_all(client, "GET /hel");
+
+    // Under the default thirty seconds the client's own five second deadline fires first and this reads empty.
+    EXPECT_EQ(status_line(client), "HTTP/1.1 408 Request Timeout");
 }
 
 }  // namespace

@@ -1,5 +1,7 @@
 #include "server/pool.hpp"
 
+#include <carafe/config.hpp>
+
 #include "net/socket.hpp"
 #include "server/connection.hpp"
 #include "server/router.hpp"

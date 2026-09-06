@@ -1,5 +1,6 @@
 #include "server/serve.hpp"
 
+#include <carafe/config.hpp>
 #include <carafe/http/request.hpp>
 #include <carafe/http/response.hpp>
 
@@ -217,8 +218,9 @@ void serve_connection(Connection& conn, const Router& router) {
     }
 }
 
-void serve_forever(net::Listener& listener, const std::shared_ptr<const Router>& router, PoolLimits limits) {
-    ConnectionPool pool{router, limits};
+void serve_forever(net::Listener& listener, const std::shared_ptr<const Router>& router, PoolLimits limits,
+                   Deadlines deadlines) {
+    ConnectionPool pool{router, limits, deadlines};
 
     while (true) {
         auto accepted = listener.accept();

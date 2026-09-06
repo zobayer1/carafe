@@ -22,7 +22,7 @@ app.put("/store/<key>", [](const carafe::http::Request& request) {
     return carafe::http::text_response(200, body + " = " + request.body + "\n");
 });
 
-app.run(8080);
+const carafe::RunError stopped = app.run(8080);
 ```
 
 ## Registered routes
@@ -284,13 +284,18 @@ as the first cared to hold on, which is not long enough for a browser to be the
 first.
 
 A connection that goes quiet is not held for ever: every read carries a deadline,
-and a connection that says nothing for thirty seconds is closed. If half a request
-had arrived, the client is told why:
+and a connection that says nothing until the idle deadline passes is closed. The
+example sets that to ten seconds. If half a request had arrived, the client is
+told why:
 
 ```console
-$ { printf 'GET /hel'; sleep 40; } | nc localhost 8080
+$ { printf 'GET /hel'; sleep 15; } | nc localhost 8080
 HTTP/1.1 408 Request Timeout
+content-type: text/plain; charset=utf-8
 connection: close
+content-length: 20
+
+408 Request Timeout
 ```
 
 The `sleep` is what makes this work. Piping `printf` straight into `nc` closes the
@@ -305,15 +310,22 @@ request runs from its first byte, not from its last, so a client sending one byt
 at a time is cut off on the same schedule as one sending nothing:
 
 ```console
-$ # a byte every second, against a thirty second budget
+$ # a byte every second, against a ten second budget
 $ python3 -c "
 import socket, time
 s = socket.create_connection(('localhost', 8080))
-for byte in b'GET /hello HTTP/1.1':
-    s.sendall(bytes([byte])); time.sleep(1)
+try:
+    for byte in b'GET /hello HTTP/1.1':
+        s.sendall(bytes([byte])); time.sleep(1)
+except BrokenPipeError:
+    pass
 print(s.recv(100).split(b'\r\n')[0].decode())"
 HTTP/1.1 408 Request Timeout
 ```
+
+The drip has to survive a broken pipe to print anything, and that is the
+deadline firing rather than an error: the server answered and hung up while the
+client was still on its twelfth byte. The `408` it sent is there to read.
 
 A client that stops *reading* is bounded by the same deadline applied to sending,
 so a response too large to sit in the socket buffers cannot hold a thread while
@@ -330,21 +342,22 @@ does not move when clients arrive:
 ```console
 $ ./build/debug/bin/hello &
 $ ls /proc/$!/task | wc -l
-65
+17
 $ # 80 connections, each sending a partial head and then holding on
 $ ls /proc/$!/task | wc -l
-65
+17
 ```
 
-Sixty five is the main thread and sixty four workers. One worker serves a whole
+Seventeen is the main thread and the sixteen workers the example asks for. One
+worker serves a whole
 connection rather than one request, so a client holding a keep-alive connection
 holds a worker with it. Past sixty four, connections wait in the queue; past the
 queue, they are closed as they arrive rather than held. A connection that waited
 in the queue longer than the queue deadline is dropped when a worker finally
 reaches it, on the grounds that the client has very likely gone.
 
-Neither bound is reachable from `App::run`, which takes only a port. Serving with
-a different pool size means calling `serve_forever` directly for now.
+Both bounds are arguments to `run`, and the numbers above are the ones the
+example passes. See *Choosing the bounds* below.
 
 Reaching that limit is survivable but not comfortable. Accepting fails with
 `EMFILE`, the loop waits and asks again, and the server serves normally the moment
@@ -363,3 +376,62 @@ answer anyone while every descriptor is held by a client that will not let go.
 The deadlines are what get those descriptors back without waiting for the client
 to relent. The pool bounds threads, not descriptors: a connection sitting in the
 queue still holds one.
+
+## Choosing the bounds
+
+`run` takes the pool limits and the deadlines after the port. The example sets
+both rather than leaving them at their defaults, which is what makes the queue
+reachable by hand:
+
+```cpp
+// Sixteen connections served at once, sixty four more waiting for a worker, and
+// a connection that waited two seconds dropped rather than served.
+constexpr carafe::PoolLimits limits{16, 64, std::chrono::seconds(2)};
+
+// A connection silent for ten seconds is closed, and a request has ten seconds
+// to arrive and to be answered.
+constexpr carafe::Deadlines deadlines{std::chrono::seconds(10),
+                                      std::chrono::seconds(10)};
+
+// run() has no success to return: it serves until something stops it.
+const carafe::RunError failure = app.run(port, limits, deadlines);
+std::cerr << "carafe stopped: " << carafe::describe(failure) << '\n';
+```
+
+`RunError` says which failure it was, because there are now three that a `bool`
+would have run together: `InvalidLimits`, `InvalidDeadlines`, `BindFailed` and
+`AcceptFailed`. Reporting a rejected deadline as a port that would not bind
+sends the reader to the wrong problem. There is no `None`: `run` returns nothing but
+failures, and `describe` turns one into a line worth printing.
+
+Both arguments default, so `app.run(8080)` still compiles. The defaults are
+sixty four workers, a queue of five hundred and twelve, and thirty seconds for
+each deadline.
+
+Zero is refused rather than honoured, and `run` returns `false` before
+binding anything. No workers means nothing ever takes from the queue. No queue
+room means every arrival is closed even while every worker sits idle, because a
+worker is only ever handed work through the queue. And a zero deadline reaches
+`setsockopt` as *no* deadline at all, which is the opposite of how it reads. Ask
+for no limit with a large value instead.
+
+With sixteen and sixty four, the far end of the queue is one command away.
+Sixteen connections take the workers, sixty four more fill the queue, and the
+next one is closed as it arrives:
+
+```console
+$ python3 -c "
+import socket
+held = [socket.create_connection(('localhost', 8080)) for _ in range(80)]
+for s in held:
+    s.sendall(b'GET /hel')
+extra = socket.create_connection(('localhost', 8080)); extra.settimeout(5)
+print(repr(extra.recv(200)))"
+b''
+```
+
+The empty read is the server having closed it without a word. Sending first
+gets a reset instead of an end, because closing a socket that still holds unread
+bytes is a reset rather than a clean finish. Either way the client learns at
+once, which is the point: the accept loop cannot afford to wait on a `503` it
+would have to write itself.

@@ -1330,3 +1330,42 @@ so a `std::system_error` from the fifth thread would leave four running with a
 vector destroyed under them, which is a call to `std::terminate`. Failing to start
 a worker is treated the way a failed accept is: keep what is running, serve with a
 smaller pool than asked for, and carry on.
+
+## A number the caller cannot reach is the library's number, not theirs
+
+The pool landed with its bounds written into it. Sixty four workers, a queue
+of five hundred and twelve, thirty seconds on each deadline: all reasonable,
+none of them the caller's. `App::run` took a port and nothing else, so the
+only way to serve with different numbers was to skip `App` and call
+`serve_forever`, which is the internal API. A default nobody can change is not
+a default.
+
+`Deadlines` and `PoolLimits` moved out of `src/server/` into
+`include/carafe/config.hpp` rather than being mirrored by a public pair of
+structs with a translation function between them. Mirroring means the same
+five defaults written twice, and they drift the first time one of them moves.
+The move costs nothing at the use sites: internal code names them unqualified
+from inside `carafe::server`, and lookup finds them in the enclosing
+namespace.
+
+Zero is refused rather than honoured. Every field has a zero that reads like
+*unlimited* and behaves like the opposite. No workers means nothing ever takes
+from the queue. No queue room means every arrival is closed even while every
+worker sits idle, because a worker is only ever handed work through the queue.
+A zero deadline is the trap that cost a whole afternoon earlier: it reaches
+`setsockopt` as no deadline at all, so it does not fire immediately, it never
+fires. A caller who wants no limit passes a large value and means it.
+
+Refusing brought a second problem with it. `run` returned `bool`, which was
+honest while the only failure was a port that would not bind, and a lie the
+moment there were three. The example printed `could not serve on port 8080`
+for a rejected deadline, which sends the reader to the one thing that was not
+wrong. `RunError` names each one, and `describe` keeps the wording in the
+library rather than in every caller. It has no `None`: `run` returns only when
+it has given up, so a success value would be a state that never exists.
+
+The checks sit in front of the bind, which is what makes them observable. A
+test holds a port, asks `run` to use it with a zero worker count, and requires
+`InvalidLimits` rather than `BindFailed`. Had the check gone missing, `run`
+would reach the bind and report that instead, so the test fails rather than
+passing on a technicality.

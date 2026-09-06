@@ -1,5 +1,7 @@
 #pragma once
 
+#include <carafe/config.hpp>
+
 #include "net/socket.hpp"
 #include "server/connection.hpp"
 #include "server/router.hpp"
@@ -14,14 +16,6 @@
 #include <vector>
 
 namespace carafe::server {
-
-// How much work the server holds at once. `workers` bounds what is being served, `queued` absorbs the arrivals that
-// land while they are busy, and a connection waiting longer than `queue_wait` is dropped rather than served.
-struct PoolLimits {
-    std::size_t workers = 64;
-    std::size_t queued = 512;
-    std::chrono::milliseconds queue_wait{std::chrono::seconds(5)};
-};
 
 // A fixed set of threads serving accepted connections, and a bounded queue of those waiting for one.
 //

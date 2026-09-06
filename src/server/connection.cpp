@@ -1,5 +1,7 @@
 #include "server/connection.hpp"
 
+#include <carafe/config.hpp>
+
 #include "net/socket.hpp"
 
 #include <cerrno>

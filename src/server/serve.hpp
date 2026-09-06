@@ -1,5 +1,7 @@
 #pragma once
 
+#include <carafe/config.hpp>
+
 #include "net/listener.hpp"
 #include "server/connection.hpp"
 #include "server/pool.hpp"
@@ -14,6 +16,7 @@ void serve_connection(Connection& conn, const Router& router);
 
 // Serves every connection this listener accepts, on a bounded pool of threads. Returns only when accepting fails for a
 // reason retrying would not fix.
-void serve_forever(net::Listener& listener, const std::shared_ptr<const Router>& router, PoolLimits limits = {});
+void serve_forever(net::Listener& listener, const std::shared_ptr<const Router>& router, PoolLimits limits = {},
+                   Deadlines deadlines = {});
 
 }  // namespace carafe::server

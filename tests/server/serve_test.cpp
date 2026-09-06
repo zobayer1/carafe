@@ -1,5 +1,6 @@
 #include "server/serve.hpp"
 
+#include <carafe/config.hpp>
 #include <carafe/http/handler.hpp>
 #include <carafe/http/request.hpp>
 #include <carafe/http/response.hpp>
@@ -160,8 +161,8 @@ constexpr std::string_view last_chunk = "0\r\n\r\n";
 // Deadlines short enough to watch fire, one at a time. Reaching past Connection to set SO_RCVTIMEO on the socket would
 // be overwritten by the deadline it applies before every read. Only one limit is short in each, so a test cannot pass
 // because the wrong one fired.
-constexpr carafe::server::Deadlines brief_idle{std::chrono::milliseconds(50), std::chrono::seconds(5)};
-constexpr carafe::server::Deadlines brief_request{std::chrono::seconds(5), std::chrono::milliseconds(50)};
+constexpr carafe::Deadlines brief_idle{std::chrono::milliseconds(50), std::chrono::seconds(5)};
+constexpr carafe::Deadlines brief_request{std::chrono::seconds(5), std::chrono::milliseconds(50)};
 
 constexpr std::string_view get_root = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
 

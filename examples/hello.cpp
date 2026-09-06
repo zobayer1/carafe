@@ -1,15 +1,16 @@
 // The smallest thing that proves the socket, the parser, the router and the responder are joined up, plus enough routes
 // to drive a body through by hand. examples/README.md walks through what each one answers.
 //
-// Each connection is served on its own thread, so a browser holding a persistent one open no longer keeps anyone else
-// waiting. Nothing bounds how many: a client that connects and stays silent holds a thread until it hangs up, which is
-// what the pool and idle-timeout milestone is for.
+// Each connection is served by a worker from a fixed pool, so a browser holding a persistent one open no longer keeps
+// anyone else waiting, and how many are held at once is chosen below rather than discovered under load.
 
 #include <carafe/app.hpp>
+#include <carafe/config.hpp>
 #include <carafe/http/request.hpp>
 #include <carafe/http/response.hpp>
 #include <carafe/version.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <string>
@@ -21,6 +22,14 @@ using carafe::http::text_response;
 
 int main() {
     constexpr std::uint16_t port = 8080;
+
+    // Smaller than the defaults so the bounds are reachable from one terminal: sixteen connections served at once,
+    // sixty four more waiting for a worker, and a connection that waited two seconds dropped rather than served.
+    constexpr carafe::PoolLimits limits{16, 64, std::chrono::seconds(2)};
+
+    // Shorter than the defaults for the same reason. A connection silent for ten seconds is closed, and a request has
+    // ten seconds to arrive and be answered. Zero would mean no deadline at all, so run() refuses it.
+    constexpr carafe::Deadlines deadlines{std::chrono::seconds(10), std::chrono::seconds(10)};
 
     carafe::App app;
 
@@ -103,9 +112,8 @@ int main() {
               << "\n      see examples/README.md for the rest\n"
               << std::flush;
 
-    if (!app.run(port)) {
-        std::cerr << "could not serve on port " << port << '\n';
-        return 1;
-    }
-    return 0;
+    // run() has no success to return: it serves until something stops it, and then says what.
+    const carafe::RunError failure = app.run(port, limits, deadlines);
+    std::cerr << "carafe stopped: " << carafe::describe(failure) << '\n';
+    return 1;
 }

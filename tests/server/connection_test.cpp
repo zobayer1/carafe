@@ -1,5 +1,7 @@
 #include "server/connection.hpp"
 
+#include <carafe/config.hpp>
+
 #include "http/printers.hpp"
 #include "net/socket.hpp"
 
@@ -45,7 +47,7 @@ void send_all(const Socket& sock, std::string_view bytes) {
 // A request deadline that has expired by the time it is looked at, which is the only way to reach a read with nothing
 // left of one. Namespace scope because a thread body reads it, and a local constexpr would have to be captured to be
 // read there.
-constexpr carafe::server::Deadlines already_over{std::chrono::seconds(5), std::chrono::milliseconds(0)};
+constexpr carafe::Deadlines already_over{std::chrono::seconds(5), std::chrono::milliseconds(0)};
 
 constexpr std::string_view get_root = "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n";
 constexpr std::string_view no_content = "HTTP/1.1 204 No Content\r\n\r\n";
@@ -246,7 +248,7 @@ TEST(Connection, ReportsTheErrnoWhenTheReadFails) {
 TEST(Connection, StopsWritingWhenThePeerStopsReading) {
     auto pair = connected_pair();
     Connection conn{std::move(pair.second),
-                    carafe::server::Deadlines{std::chrono::milliseconds(50), std::chrono::milliseconds(50)}};
+                    carafe::Deadlines{std::chrono::milliseconds(50), std::chrono::milliseconds(50)}};
 
     const std::string more_than_fits(std::size_t{4} * 1024 * 1024, 'x');
     const auto result = conn.write(more_than_fits);

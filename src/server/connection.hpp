@@ -1,5 +1,6 @@
 #pragma once
 
+#include <carafe/config.hpp>
 #include <carafe/http/request.hpp>
 
 #include "http/request_reader.hpp"
@@ -29,14 +30,6 @@ struct ConnectionResult {
     [[nodiscard]] explicit operator bool() const noexcept {
         return error == http::RequestError::None && os_error == 0;
     }
-};
-
-// How long a connection may wait, in two parts. Separate because waiting for a request to begin should be generous to a
-// client with nothing to say yet, and waiting for one to finish should not: the second is the only one a client can
-// renew by sending anything at all.
-struct Deadlines {
-    std::chrono::milliseconds idle{std::chrono::seconds(30)};
-    std::chrono::milliseconds request{std::chrono::seconds(30)};
 };
 
 // A socket and the parser state for the bytes coming off it. Members rather than parameters: a half-received head lives

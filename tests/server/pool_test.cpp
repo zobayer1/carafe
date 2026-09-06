@@ -1,5 +1,6 @@
 #include "server/pool.hpp"
 
+#include <carafe/config.hpp>
 #include <carafe/http/handler.hpp>
 #include <carafe/http/request.hpp>
 #include <carafe/http/response.hpp>
@@ -27,14 +28,14 @@
 
 namespace {
 
+using carafe::Deadlines;
+using carafe::PoolLimits;
 using carafe::http::Handler;
 using carafe::http::Method;
 using carafe::http::Request;
 using carafe::http::text_response;
 using carafe::net::Socket;
 using carafe::server::ConnectionPool;
-using carafe::server::Deadlines;
-using carafe::server::PoolLimits;
 using carafe::server::Router;
 
 // Short enough that no test waits out a default, long enough that a handler held for a moment is not cut off under it.

@@ -9,6 +9,7 @@ configure_file(
 set(CARAFE_HEADERS
     "${PROJECT_BINARY_DIR}/generated/carafe/version.hpp"
     "${PROJECT_SOURCE_DIR}/include/carafe/app.hpp"
+    "${PROJECT_SOURCE_DIR}/include/carafe/config.hpp"
     "${PROJECT_SOURCE_DIR}/include/carafe/http/handler.hpp"
     "${PROJECT_SOURCE_DIR}/include/carafe/http/headers.hpp"
     "${PROJECT_SOURCE_DIR}/include/carafe/http/request.hpp"

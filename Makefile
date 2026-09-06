@@ -51,12 +51,20 @@ release: ## Build + test the release preset
 asan: ## Build + test with AddressSanitizer + UBSan
 	@$(MAKE) --no-print-directory PRESET=asan test
 
+# gcov reports a negative hit count for some switch statements, which gcovr
+# treats as a fatal parse error. It is a gcov bug, not a broken build:
+# https://gcc.gnu.org/bugzilla/show_bug.cgi?id=68080. Warn once per file and
+# carry on. An `if` rather than `&&`/`||`, so a gcovr that runs and fails fails
+# this target instead of reporting it as a missing gcovr.
 coverage: ## Build + test with gcov, then print a coverage summary
 	@$(MAKE) --no-print-directory PRESET=coverage test
-	@command -v gcovr >/dev/null 2>&1 \
-		&& gcovr --root . --filter 'src/|include/' --exclude-unreachable-branches \
-			--print-summary build/coverage \
-		|| echo "gcovr not installed. try: pipx install gcovr"
+	@if command -v gcovr >/dev/null 2>&1; then \
+		gcovr --root . --filter 'src/|include/' --exclude-unreachable-branches \
+			--gcov-ignore-parse-errors=negative_hits.warn_once_per_file \
+			--print-summary build/coverage; \
+	else \
+		echo "gcovr not installed. try: pipx install gcovr"; \
+	fi
 
 format: ## Reformat all sources in place with clang-format
 	@echo "$(CXX_FILES)" | tr ' ' '\n' | grep . | xargs -r clang-format -i
