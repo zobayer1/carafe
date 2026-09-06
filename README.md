@@ -163,6 +163,10 @@ Every non-obvious decision, and what was rejected to reach it, lives in
 [docs/design-notes.md](docs/design-notes.md) — including how the tree is laid
 out, where the public/internal boundary runs, and which flags are `PRIVATE`.
 
+[docs/architecture.html](docs/architecture.html) draws the same ground: the four
+layers and which way their dependencies point, what owns what while a client is
+connected, and one request from `connect` to response. Open it in a browser.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Copyright (c) 2026 Zobayer Hasan.
