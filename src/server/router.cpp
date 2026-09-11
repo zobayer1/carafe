@@ -4,6 +4,7 @@
 #include <carafe/http/request.hpp>
 
 #include "http/ascii.hpp"
+#include "http/path.hpp"
 
 #include <algorithm>
 #include <string>
@@ -113,14 +114,20 @@ Pattern compile(std::string_view path) {
     return pattern;
 }
 
+// The path as a lookup compares it: the query cut off, then normalised, so a target and a pattern meet in one
+// spelling. Owned rather than viewed, since normalising may rewrite the bytes.
+[[nodiscard]] std::string routable_path(std::string_view target) {
+    return http::normalize_path(path_of(target));
+}
+
 }  // namespace
 
 void Router::add(http::Method method, std::string_view path, http::Handler handler) {
-    routes_.push_back({method, compile(path), std::move(handler)});
+    routes_.push_back({method, compile(http::normalize_path(path)), std::move(handler)});
 }
 
 Match Router::find(http::Method method, std::string_view target) const {
-    const std::string_view path = path_of(target);
+    const std::string path = routable_path(target);
     const http::Handler* fallback = nullptr;
     http::Params fallback_params;
     bool path_matched = false;
@@ -152,7 +159,7 @@ Match Router::find(http::Method method, std::string_view target) const {
 }
 
 std::vector<http::Method> Router::allowed_methods(std::string_view target) const {
-    const std::string_view path = path_of(target);
+    const std::string path = routable_path(target);
     std::vector<http::Method> allowed;
 
     for (const Route& route : routes_) {

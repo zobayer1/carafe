@@ -46,4 +46,22 @@ namespace carafe::http {
     return -1;
 }
 
+// The HEXDIG for one nibble, and the inverse of ascii_hex_value. Uppercase, because RFC 3986 §6.2.2.1 makes that the
+// normal form of a percent-escape, so two spellings of one byte compare equal. `value` must be 0 through 15;
+// arithmetic rather than a table, so a caller that breaks that gets a wrong character instead of a read past the end.
+[[nodiscard]] constexpr char ascii_hex_digit(int value) noexcept {
+    if (value < 10) {
+        return static_cast<char>('0' + value);
+    }
+    return static_cast<char>('A' + value - 10);
+}
+
+// The characters RFC 3986 §2.3 leaves unreserved. Escaping one of these changes nothing about what a URI means, so
+// resolving its escape changes nothing either. Every other byte is reserved somewhere, and decoding it may.
+[[nodiscard]] constexpr bool ascii_unreserved(char ch) noexcept {
+    const auto u_ch = static_cast<unsigned char>(ch);
+    return (u_ch >= 'A' && u_ch <= 'Z') || (u_ch >= 'a' && u_ch <= 'z') || (u_ch >= '0' && u_ch <= '9') ||
+           u_ch == '-' || u_ch == '.' || u_ch == '_' || u_ch == '~';
+}
+
 }  // namespace carafe::http

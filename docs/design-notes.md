@@ -1369,3 +1369,57 @@ test holds a port, asks `run` to use it with a zero worker count, and requires
 `InvalidLimits` rather than `BindFailed`. Had the check gone missing, `run`
 would reach the bind and report that instead, so the test fails rather than
 passing on a technicality.
+
+## Three spellings of one path were three routes
+
+A target used to reach the router exactly as it arrived. `/a/b`, `/a/./b` and
+`/a/x/../b` name one resource and matched three different things, which is two
+bugs wearing one coat. The dull half is that a client spelling a path the long
+way round gets a 404. The sharp half is that `..` reaches a capture, and a
+capture is what a file handler is going to open.
+
+Normalisation runs in two passes and the order is the whole point. The first
+resolves percent-escapes, the second removes dot segments. Doing it the other
+way round leaves `%2e%2e` looking like an ordinary name, so it survives the
+walk and arrives as a capture holding `..`.
+
+The first pass resolves only the escapes of unreserved characters, which RFC
+3986 §2.3 defines and §6.2.2.2 says are the only ones equivalent to the
+character they stand for. That single rule does two jobs. `%2e` becomes `.`,
+so an encoded dot segment cannot hide from the second pass. `%2f` stays `%2F`,
+so no client can spell a separator that the split will not see. Everything
+else keeps its escape with the hex uppercased, because two spellings of one
+byte should not route to two places.
+
+It also settled an old question. A literal segment used to be compared as the
+bytes it was registered with, recorded as a known gap that normalisation would
+close. It closed half of it: `/t%65a` now reaches a route registered at
+`/tea`, while `/caf%C3%A9` still does not reach one registered at the raw
+UTF-8 bytes. That half is not a gap any more, it is the RFC declining to grant
+the equivalence for anything reserved.
+
+Resolving escapes before matching and decoding captures after it looks like
+decoding twice, and is not, for the same reason. `%` is not unreserved, so
+`%25` survives the first pass and only the capture decode turns it back into a
+percent sign. A handler asking for `/echo/%2541` is given the text `%41`, and
+one asking for `/echo/%252e%252e` is given `%2e%2e`. A second decode there
+would hand back the traversal the first pass had just removed.
+
+Both sides are normalised, because normalising only the target moves the
+mismatch rather than removing it: a pattern registered as `/a/./b` would still
+sit there unreachable. The pattern gets it at registration, where it is paid
+for once, beside the split that is already done there for the same reason. A
+parameter segment passes through untouched, since the walk only acts on a
+segment that is exactly `.` or `..`, and `<..>` is neither.
+
+Two things are deliberately left alone. Empty segments stay, so `//a` is not
+`/a`: the RFC does not merge them, and a pattern cannot match one, so the
+surprise is a clean miss rather than a path that quietly means two things. A
+trailing slash stays significant, so `/hello/` will not match `/hello`.
+Merging those would make a route answer a path it never claimed. The
+friendlier alternative is a 308 redirect to the canonical form, which is a
+feature with a response path of its own.
+
+The query is cut before any of this runs, and the order there is not cosmetic.
+Normalising first turns `/a/b?x=../../y` into `/a/y`, which is a query string
+rewriting the path it was attached to.

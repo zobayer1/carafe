@@ -517,14 +517,78 @@ TEST(Router, CopiesAnUndecodableEscapeLiterally) {
     EXPECT_EQ(bound_param(router, "/users/%", "id"), "%");
 }
 
-// A known gap, not a decision: only captures are decoded, so a literal segment is still compared as the bytes it was
-// registered with. Expected to fail the day a pattern and a request path are normalised against each other.
-TEST(Router, DoesNotDecodeLiteralSegments) {
+// RFC 3986 §6.2.2.2 grants the equivalence for unreserved characters only, so "%65" and "e" name one path while
+// "%C3%A9" and the bytes it stands for name two. The second pair is left apart deliberately: decoding it would claim
+// an equivalence the RFC withholds, and the byte it produces is reserved somewhere.
+TEST(Router, ComparesLiteralSegmentsAfterResolvingUnreservedEscapesOnly) {
     Router router;
     router.add(Method::Get, "/caf\xC3\xA9", answering("cafe"));
+    router.add(Method::Get, "/tea", answering("tea"));
 
     EXPECT_FALSE(router.find(Method::Get, "/caf%C3%A9"));
     EXPECT_TRUE(router.find(Method::Get, "/caf\xC3\xA9"));
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/t%65a")), "tea");
+}
+
+// A target and a pattern are normalised the same way, so a path spelled the long way round reaches the route it names.
+TEST(Router, MatchesATargetThatNeededNormalising) {
+    Router router;
+    router.add(Method::Get, "/a/b", answering("ab"));
+
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/a/x/../b")), "ab");
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/a/./b")), "ab");
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/../a/b")), "ab");
+}
+
+// The other side of the same rule. Normalising only the target would move the mismatch rather than remove it.
+TEST(Router, NormalisesThePatternTheSameWay) {
+    Router router;
+    router.add(Method::Get, "/a/./b", answering("ab"));
+    router.add(Method::Get, "/c/x/../d", answering("cd"));
+
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/a/b")), "ab");
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/c/d")), "cd");
+}
+
+// The reason normalisation landed. A capture cannot be handed ".." however it is spelled, because the segment is gone
+// before matching starts: both of these name the root, which no route here serves.
+TEST(Router, CannotReachACaptureThroughADotSegment) {
+    Router router;
+    router.add(Method::Get, "/files/<name>", answering("file"));
+
+    EXPECT_FALSE(router.find(Method::Get, "/files/.."));
+    EXPECT_FALSE(router.find(Method::Get, "/files/%2e%2e"));
+    EXPECT_FALSE(router.find(Method::Get, "/files/%2E%2E"));
+}
+
+// The query is cut before the path is normalised, so dot segments inside it stay inside it. The other order would let
+// a query string rewrite the path it was attached to.
+TEST(Router, NormalisesThePathWithoutLettingTheQueryIntoIt) {
+    Router router;
+    router.add(Method::Get, "/a/b", answering("ab"));
+
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/a/b?x=../../y")), "ab");
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/a/x/../b?q=1")), "ab");
+}
+
+// find and allowed_methods normalise through the same helper, so a 405 lists the methods of the route that a 404 would
+// have missed for the same target.
+TEST(Router, AllowsTheMethodsOfATargetThatNeededNormalising) {
+    Router router;
+    router.add(Method::Get, "/a/b", answering("ab"));
+    router.add(Method::Post, "/a/b", answering("post"));
+
+    EXPECT_EQ(router.allowed_methods("/a/x/../b"), (Methods{Method::Get, Method::Head, Method::Post}));
+}
+
+// Normalising resolves unreserved escapes and the capture decodes the rest, which must not amount to decoding twice.
+// "%25" stands for a percent sign, so what the handler sees is the text "%41" and never the letter it would decode to.
+TEST(Router, DoesNotDecodeACaptureTwice) {
+    Router router;
+    router.add(Method::Get, "/echo/<v>", answering("echo"));
+
+    EXPECT_EQ(bound_param(router, "/echo/%2541", "v"), "%41");
+    EXPECT_EQ(bound_param(router, "/echo/%252e%252e", "v"), "%2e%2e");
 }
 
 TEST(Router, HeadKeepsTheCapturesOfTheGetRouteItFallsBackTo) {

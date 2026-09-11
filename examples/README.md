@@ -86,6 +86,44 @@ curl -i http://localhost:8080/hello/a%2Fb            # hello, a/b!
 curl -i --path-as-is http://localhost:8080/hello/a%25b  # hello, a%b!
 ```
 
+## One path, one spelling
+
+A target is normalised before it is matched, and so is the pattern it is matched
+against, so a path spelled the long way round reaches the route it names. Every
+row below is the first line of the response body:
+
+```console
+$ # curl rewrites a path itself, so --path-as-is is what sends these as written
+/hello/world               hello, world!
+/hello/../hello/world      hello, world!
+/hello/./world             hello, world!
+/../../../hello/world      hello, world!
+/hello/..                  carafe 0.1.0
+/hello/%2e%2e              carafe 0.1.0
+/hello/a%2Fb               hello, a/b!
+/hello/%252e%252e          hello, %2e%2e!
+```
+
+Rows five and six are the ones that matter. `..` pops the segment before it, so
+both name the root and are answered by the route registered at `/`. Neither
+reaches `/hello/<name>`, so no handler is ever handed `..` as a capture.
+Row six is the same thing spelled in hex: escapes are resolved before segments
+are split, so an encoded dot segment cannot hide from the walk.
+
+Row seven is the other half of that order. An escaped separator stays escaped
+through normalisation and is decoded only once the segment is a capture, so it
+is one byte of a name rather than the end of one. Row eight keeps those two
+rules from cancelling out: `%` is not an unreserved character, so `%25` survives
+normalisation and only the capture decode turns it back. A second decode there
+would hand `..` straight back.
+
+RFC 3986 §6.2.2.2 is why only some escapes are resolved. `%65` and `e` name
+the same path, so `/t%65a` would reach a route registered at `/tea`. `%C3%A9`
+and the bytes it stands for do not, so those stay apart.
+
+A trailing slash is part of the path, so `/store/k/` is not `/store/k` and comes
+back `404`. Nothing here redirects one to the other.
+
 ## How long the connection lives
 
 Every row is one connection carrying a single `GET /hello`. The question is what

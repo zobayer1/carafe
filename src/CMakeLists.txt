@@ -17,6 +17,7 @@ set(CARAFE_HEADERS
     http/ascii.hpp
     http/field_list.hpp
     http/line_reader.hpp
+    http/path.hpp
     http/request_parser.hpp
     http/request_reader.hpp
     net/listener.hpp
@@ -31,6 +32,7 @@ set(CARAFE_SOURCES
     app.cpp
     http/headers.cpp
     http/line_reader.cpp
+    http/path.cpp
     http/request.cpp
     http/request_parser.cpp
     http/request_reader.cpp

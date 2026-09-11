@@ -33,6 +33,7 @@ set(CARAFE_TEST_SOURCES
     app_test.cpp
     http/headers_test.cpp
     http/line_reader_test.cpp
+    http/path_test.cpp
     http/request_test.cpp
     http/request_parser_test.cpp
     http/request_reader_test.cpp
