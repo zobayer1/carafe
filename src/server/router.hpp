@@ -9,10 +9,17 @@
 
 namespace carafe::server {
 
-// One segment of a path pattern: literal text, or the name a capture binds to.
+// What a pattern segment accepts. None is literal text, and is where an unreadable parameter lands.
+enum class Capture {
+    None,
+    Text,    // one segment, any non-empty
+    Number,  // one segment, ASCII digits only
+};
+
+// One segment of a path pattern: literal text, or the name a capture binds to and what it will accept.
 struct Segment {
     std::string text;
-    bool is_param = false;
+    Capture capture = Capture::None;
 };
 
 // Split on '/' once, at registration, so matching never re-parses.
@@ -35,8 +42,14 @@ struct Match {
 
 class Router {
 public:
-    // Appended, and find() scans in order, so a path registered twice keeps its first handler. Harmless, rather than an
-    // error with no channel to report on.
+    // A segment spelled "<name>" captures that segment under that name, and "<str:name>" says so explicitly.
+    // "<int:name>" captures only a segment of ASCII digits, so "/users/<int:id>" and "/users/<name>" can both be
+    // registered and the digits decide which one answers. A converter constrains matching alone: a capture is still
+    // text, and a handler wanting a number parses it. Anything else between angle brackets is literal text, an unknown
+    // converter and an empty name included.
+    //
+    // Appended, and find() scans in order, so a path registered twice keeps its first handler and the first pattern
+    // that matches wins however specific a later one is. Harmless, rather than an error with no channel to report on.
     void add(http::Method method, std::string_view path, http::Handler handler);
 
     // The target is expected to have come through the parser, which 400s a malformed percent-escape first. One that

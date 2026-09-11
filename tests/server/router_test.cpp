@@ -450,6 +450,113 @@ TEST(Router, TreatsAHalfBracketedSegmentAsLiteralText) {
     EXPECT_FALSE(router.find(Method::Get, "/users/42"));
 }
 
+// "<str:id>" is the long spelling of "<id>", offered so a pattern can say what it accepts even where the answer is
+// "anything".
+TEST(Router, MatchesAnExplicitStrConverter) {
+    Router router;
+    router.add(Method::Get, "/users/<str:id>", answering("user"));
+
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/users/bob")), "user");
+    EXPECT_EQ(bound_param(router, "/users/bob", "id"), "bob");
+    EXPECT_EQ(bound_param(router, "/users/42", "id"), "42");
+}
+
+// A converter constrains the shape of a segment, nothing more. The last row is the one normalisation decides: digits
+// are unreserved so "%34%32" is already "42" by the time the walk sees it, while "%2B" keeps its escape and is not a
+// digit at all.
+TEST(Router, AcceptsOnlyDigitsForAnIntConverter) {
+    Router router;
+    router.add(Method::Get, "/users/<int:id>", answering("user"));
+
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/users/42")), "user");
+    EXPECT_FALSE(router.find(Method::Get, "/users/bob"));
+    EXPECT_FALSE(router.find(Method::Get, "/users/4a"));
+    EXPECT_FALSE(router.find(Method::Get, "/users/-1"));
+    EXPECT_FALSE(router.find(Method::Get, "/users/%2B42"));
+    EXPECT_EQ(bound_param(router, "/users/%34%32", "id"), "42");
+}
+
+// Nothing is not a number either. The walk refuses an empty segment before asking what would accept it, which is why
+// an all-digits test that passes over nothing is still safe here.
+TEST(Router, DoesNotBindAnIntParameterToAnEmptySegment) {
+    Router router;
+    router.add(Method::Get, "/users/<int:id>", answering("user"));
+
+    EXPECT_FALSE(router.find(Method::Get, "/users/"));
+    EXPECT_FALSE(router.find(Method::Get, "/users//"));
+}
+
+// The name is what follows the colon. Binding "int:id" would make every typed route unreadable from a handler.
+TEST(Router, CapturesUnderTheNameAfterTheConverter) {
+    Router router;
+    router.add(Method::Get, "/users/<int:id>", answering("user"));
+
+    EXPECT_EQ(bound_param(router, "/users/42", "id"), "42");
+    EXPECT_EQ(bound_param(router, "/users/42", "int:id"), std::nullopt);
+}
+
+// A capture stays text whatever accepted it, so a pattern that admits only digits still hands over the bytes it was
+// given. Leading zeros are part of a key rather than noise to be trimmed.
+TEST(Router, KeepsLeadingZerosInAnIntCapture) {
+    Router router;
+    router.add(Method::Get, "/users/<int:id>", answering("user"));
+
+    EXPECT_EQ(bound_param(router, "/users/007", "id"), "007");
+    EXPECT_EQ(bound_param(router, "/users/0", "id"), "0");
+}
+
+// What the converter is for: two routes on one shape of path, told apart by what the segment looks like.
+TEST(Router, TellsTwoPatternsApartByWhatTheyAccept) {
+    Router router;
+    router.add(Method::Get, "/users/<int:id>", answering("by id"));
+    router.add(Method::Get, "/users/<name>", answering("by name"));
+
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/users/42")), "by id");
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/users/bob")), "by name");
+}
+
+// Registration order still decides, and a converter buys no precedence. Registered the other way round, the pattern
+// that accepts anything takes the digits too.
+TEST(Router, StillTakesTheFirstPatternThatMatches) {
+    Router router;
+    router.add(Method::Get, "/users/<name>", answering("by name"));
+    router.add(Method::Get, "/users/<int:id>", answering("by id"));
+
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/users/42")), "by name");
+}
+
+// A converter this file does not know leaves the segment as text, the way "<>" and a half-bracketed segment already
+// do. A typo becomes a route nothing reaches rather than an error add() has no way to report.
+TEST(Router, TreatsAnUnknownConverterAsLiteralText) {
+    Router router;
+    router.add(Method::Get, "/users/<integer:id>", answering("literal"));
+    router.add(Method::Get, "/things/<:id>", answering("empty converter"));
+
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/users/<integer:id>")), "literal");
+    EXPECT_FALSE(router.find(Method::Get, "/users/42"));
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/things/<:id>")), "empty converter");
+    EXPECT_FALSE(router.find(Method::Get, "/things/42"));
+}
+
+// A known converter is not enough on its own: with no name, a capture would have nothing to bind under.
+TEST(Router, TreatsAnEmptyNameAfterAConverterAsLiteralText) {
+    Router router;
+    router.add(Method::Get, "/users/<int:>", answering("literal"));
+
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/users/<int:>")), "literal");
+    EXPECT_FALSE(router.find(Method::Get, "/users/42"));
+}
+
+// allowed_methods walks the same patterns as find, so a typed route that refuses a target owes it no 405 either.
+TEST(Router, AllowsTheMethodsOfATypedPattern) {
+    Router router;
+    router.add(Method::Get, "/users/<int:id>", answering("get"));
+    router.add(Method::Post, "/users/<int:id>", answering("post"));
+
+    EXPECT_EQ(router.allowed_methods("/users/42"), (Methods{Method::Get, Method::Head, Method::Post}));
+    EXPECT_EQ(router.allowed_methods("/users/bob"), Methods{});
+}
+
 // Odd rather than wrong, and add() has no channel to refuse it on. Both are captured and get() answers with the first,
 // as it does for repeated headers.
 TEST(Router, CapturesBothWhenAPatternBindsOneNameTwice) {

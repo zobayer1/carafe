@@ -1423,3 +1423,45 @@ feature with a response path of its own.
 The query is cut before any of this runs, and the order there is not cosmetic.
 Normalising first turns `/a/b?x=../../y` into `/a/y`, which is a query string
 rewriting the path it was attached to.
+
+## A type on a parameter is a question about shape
+
+A path parameter took any segment at all, so `/users/<id>` answered
+`/users/42` and `/users/bob` alike and a handler wanting a number had to
+decide what to do with one that was not. `<int:id>` moves that question to
+where the routing decision already is: `/users/<int:id>` and `/users/<name>`
+can both be registered, and the shape of the segment picks one.
+
+The converter constrains matching and nothing else. A capture is still text,
+and a handler that wants an integer parses it. Converting instead would mean a
+variant in the public `Params`, a typed accessor beside `get`, and an answer
+for what happens when a segment is too long for the type. None of that is what
+`int:` is for, and the disambiguation works on shape alone.
+
+So `int` means one or more ASCII digits. Not a sign, since a negative id in a
+path is nearly always a bug, and no range check, since nothing is being
+converted. Leading zeros match and survive into the capture, because `007` is
+a key rather than a number to be tidied.
+
+The test runs before the capture decode, and normalisation is why that is
+enough. Digits are unreserved, so `/users/%34%32` is already `/users/42` by
+the time the walk sees it, while `%2B42` keeps its escape and fails the test
+for being no kind of digit.
+
+Precedence stays where it was: the first pattern registered that matches wins,
+and a converter earns no priority. Ranking by specificity would mean deciding
+whether `<int:id>` is more specific than a literal, and then defending that
+order against every converter added later. Registration order needs no such
+defence, and it is already what a repeated path does.
+
+Nothing new is refused, because `add` has no channel to refuse on. An unknown
+converter or an empty name falls back to literal text, which is already what
+`<>` and a half-bracketed segment do, so `/users/<integer:id>` is a path
+nothing will ask for rather than an error nobody can see.
+
+The enum is where the next converter will be caught. `Capture` has no `Rest`
+yet, and when it gains one both switches over it, the walk and the predicate
+that says whether a segment binds a name, stop compiling until it is
+classified. That is the same guarantee the method and failure switches already
+rely on, and it is why the predicate is a switch rather than a comparison
+against `None`.

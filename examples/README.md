@@ -32,6 +32,8 @@ const carafe::RunError stopped = app.run(8080);
 | GET    | `/`              | the version and a hint                        |
 | GET    | `/hello`         | the request target it was asked for           |
 | GET    | `/hello/<name>`  | a greeting using the captured segment         |
+| GET    | `/users/<int:id>` | the captured id, for a segment of digits     |
+| GET    | `/users/<name>`  | the captured name, for anything else          |
 | POST   | `/echo`          | the request body, unchanged                   |
 | POST   | `/size`          | the body's length in bytes                    |
 | PUT    | `/store/<key>`   | the captured key and the body together        |
@@ -85,6 +87,45 @@ A percent-escape in a captured segment is decoded, and only within that segment:
 curl -i http://localhost:8080/hello/a%2Fb            # hello, a/b!
 curl -i --path-as-is http://localhost:8080/hello/a%25b  # hello, a%b!
 ```
+
+## Saying what a segment may be
+
+`<name>` captures one segment and takes whatever is in it. `<int:name>` takes
+only a segment of ASCII digits, and `<str:name>` is the long spelling of the
+default. The example registers both forms on the same shape of path:
+
+```cpp
+app.get("/users/<int:id>", ...);
+app.get("/users/<name>", ...);
+```
+
+```console
+/users/42          user #42
+/users/bob         user named bob
+/users/007         user #007
+/users/4a          user named 4a
+/users/%34%32      user #42
+/users/            404 Not Found
+```
+
+Order is the thing to know. The first pattern that matches wins and a
+converter buys no precedence, so registering `/users/<name>` first would take
+`/users/42` with it and the typed route would never answer. It is registered
+first on purpose.
+
+Row four is what "no match" means here. `4a` is not digits, so the typed
+pattern does not match and the next one does; there is no falling back inside
+a route. Row five is normalisation arriving first, since digits are unreserved
+and `%34%32` has already become `42` before the router looks at it. Row six is
+the rule that a parameter stands for something, which an empty segment does
+not.
+
+A converter constrains matching alone. The capture is still text, so `007`
+keeps its zeros, and a handler wanting a number parses it.
+
+An unknown converter is not an error, because `add` has no channel to report
+one on. A route registered at `/users/<integer:id>` is a literal path spelled
+exactly that, which no request will ever ask for.
 
 ## One path, one spelling
 

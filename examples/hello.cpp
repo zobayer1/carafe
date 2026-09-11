@@ -54,6 +54,22 @@ int main() {
         return text_response(200, std::move(body));
     });
 
+    // Two routes on one shape of path, told apart by what the segment looks like. The typed one is registered first
+    // deliberately: the first pattern that matches wins, so the other order would leave it unreachable.
+    app.get("/users/<int:id>", [](const Request& request) {
+        std::string body = "user #";
+        body += request.params.get("id").value_or("?");
+        body += '\n';
+        return text_response(200, std::move(body));
+    });
+
+    app.get("/users/<name>", [](const Request& request) {
+        std::string body = "user named ";
+        body += request.params.get("name").value_or("?");
+        body += '\n';
+        return text_response(200, std::move(body));
+    });
+
     // Hands the bytes straight back, so what comes out is proof of what went in.
     app.post("/echo", [](const Request& request) { return text_response(200, request.body); });
 
@@ -107,6 +123,7 @@ int main() {
     std::cout << "carafe " << carafe::version() << " serving on http://localhost:" << port
               << "\ntry:  curl -i http://localhost:" << port << '/' << "\n      curl -i http://localhost:" << port
               << "/hello/world"
+              << "\n      curl -i http://localhost:" << port << "/users/42"
               << "\n      curl -i --data 'hi' http://localhost:" << port << "/echo"
               << "\n      curl -i -X PUT --data 'v' http://localhost:" << port << "/store/k"
               << "\n      see examples/README.md for the rest\n"

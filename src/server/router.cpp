@@ -20,8 +20,19 @@ using size_type = std::string_view::size_type;
 
 // The request-target carries the query; routing does not use it. Clients strip fragments before sending, so '?' is the
 // only cut.
-std::string_view path_of(std::string_view target) noexcept {
+[[nodiscard]] std::string_view path_of(std::string_view target) noexcept {
     return target.substr(0, target.find('?'));
+}
+
+// True of an empty text, which is what "all" says over nothing. The walk refuses an empty segment before asking, so a
+// parameter still stands for something.
+[[nodiscard]] bool all_digits(std::string_view text) noexcept {
+    for (const char ch : text) {
+        if (ch < '0' || ch > '9') {
+            return false;
+        }
+    }
+    return true;
 }
 
 // An escape that is not "%" HEXDIG HEXDIG is copied as it stands. Unreachable in a served request, since the parser
@@ -46,9 +57,21 @@ std::string_view path_of(std::string_view target) noexcept {
     return decoded;
 }
 
+// No default: a new converter has to say whether it binds a name, rather than inherit an answer from the last one.
+[[nodiscard]] constexpr bool binds_a_name(Capture capture) noexcept {
+    switch (capture) {
+        case Capture::None:
+            return false;
+        case Capture::Text:
+        case Capture::Number:
+            return true;
+    }
+    return false;
+}
+
 // One definition of "this route serves this path", so find() and allowed_methods() cannot disagree. Captures into *out
 // on success only, so a half-match leaves no debris; null asks for the yes or no alone.
-bool matches(const Pattern& pattern, std::string_view path, http::Params* out) {
+[[nodiscard]] bool matches(const Pattern& pattern, std::string_view path, http::Params* out) {
     http::Params captured;
     size_type index = 0;
     size_type start = 0;
@@ -62,16 +85,29 @@ bool matches(const Pattern& pattern, std::string_view path, http::Params* out) {
 
         const Segment& segment = pattern[index];
 
-        if (segment.is_param) {
-            // A parameter has to stand for something: "/users//" binds no id.
-            if (piece.empty()) {
-                return false;
-            }
-            if (out != nullptr) {
-                captured.entries.push_back({segment.text, percent_decode(piece)});
-            }
-        } else if (segment.text != piece) {
+        // A parameter has to stand for something, whatever it was going to accept: "/users//" binds no id.
+        if (binds_a_name(segment.capture) && piece.empty()) {
             return false;
+        }
+
+        switch (segment.capture) {
+            case Capture::None:
+                if (segment.text != piece) {
+                    return false;
+                }
+                break;
+            case Capture::Text:
+                // Anything at all, now that it is known to be something.
+                break;
+            case Capture::Number:
+                if (!all_digits(piece)) {
+                    return false;
+                }
+                break;
+        }
+
+        if (binds_a_name(segment.capture) && out != nullptr) {
+            captured.entries.push_back({segment.text, percent_decode(piece)});
         }
 
         ++index;
@@ -90,21 +126,50 @@ bool matches(const Pattern& pattern, std::string_view path, http::Params* out) {
     return true;
 }
 
-bool contains(const std::vector<http::Method>& methods, http::Method method) {
+[[nodiscard]] bool contains(const std::vector<http::Method>& methods, http::Method method) noexcept {
     return std::find(methods.begin(), methods.end(), method) != methods.end();
+}
+
+// The converters a pattern may name. Unknown is Capture::None, which compile_segment reads as "not a parameter".
+[[nodiscard]] Capture capture_for(std::string_view converter) noexcept {
+    if (converter == "str") {
+        return Capture::Text;
+    }
+    if (converter == "int") {
+        return Capture::Number;
+    }
+    return Capture::None;
+}
+
+// A parameter is "<name>", or "<converter:name>" naming a converter this file knows and binding a name that is not
+// empty. Anything else between brackets is literal text, which is already what "<>" and a half-bracketed segment
+// become: add() has no channel to refuse a pattern on.
+[[nodiscard]] Segment compile_segment(std::string_view text) {
+    if (text.size() < 3 || text.front() != '<' || text.back() != '>') {
+        return {std::string(text), Capture::None};
+    }
+    const std::string_view inner = text.substr(1, text.size() - 2);
+    const size_type colon = inner.find(':');
+    if (colon == std::string_view::npos) {
+        return {std::string(inner), Capture::Text};
+    }
+    const Capture capture = capture_for(inner.substr(0, colon));
+    const std::string_view name = inner.substr(colon + 1);
+    if (capture == Capture::None || name.empty()) {
+        return {std::string(text), Capture::None};
+    }
+    return {std::string(name), capture};
 }
 
 // The leading empty segment is kept rather than skipped, so a pattern and a request path cut the same way and the walk
 // needs no case for the root.
-Pattern compile(std::string_view path) {
+[[nodiscard]] Pattern compile(std::string_view path) {
     Pattern pattern;
     size_type start = 0;
     while (true) {
         const size_type end = path.find('/', start);
         const std::string_view segment_text = path.substr(start, end - start);
-        const bool is_param = segment_text.length() >= 3 && segment_text.front() == '<' && segment_text.back() == '>';
-        const std::string_view text = is_param ? segment_text.substr(1, segment_text.size() - 2) : segment_text;
-        pattern.push_back({std::string(text), is_param});
+        pattern.push_back(compile_segment(segment_text));
 
         if (end == std::string_view::npos) {
             break;
