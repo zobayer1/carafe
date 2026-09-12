@@ -182,3 +182,34 @@ test holds a port, asks `run` to use it with a zero worker count, and requires
 `InvalidLimits` rather than `BindFailed`. Had the check gone missing, `run`
 would reach the bind and report that instead, so the test fails rather than
 passing on a technicality.
+
+## One handler that throws was every client
+
+A handler is the caller's code, and nothing stood between what it threw and
+the worker thread it ran on. An exception escaping a thread's function calls
+`std::terminate`, so one handler throwing ended the process, and every
+connection another client held went with it. Measured before the fix: a
+request to a throwing route came back empty, a bystander answered a moment
+earlier found its keep-alive connection closed, the next client was refused,
+and the server exited with status 134.
+
+The handler call is now wrapped, and anything it throws becomes a `500`. The
+catch is `catch (...)` rather than `std::exception`, because a handler is
+arbitrary code and may throw anything at all, an `int` included. The body is
+the status and its phrase and nothing more: an exception's message is for
+whoever runs the server, and sending it to the client leaks internals. The
+connection stays open, for the same reason a `404` keeps it: the request was
+read to its end, so the stream is still in step. The helper is not `noexcept`,
+since building the `500` allocates, and a `noexcept` would turn a failed
+allocation into exactly the crash being removed.
+
+This belongs in the server rather than in optional middleware. A guarantee a
+caller has to remember to install protects nobody who forgot. Middleware
+inherits it instead, provided the catch wraps whatever calls the handler
+rather than the handler call alone.
+
+Only the handler is covered. Routing, the `404` and `405` builders, the reader
+and serialisation are library code, and an allocation failure in any of them
+still ends the process. A last-resort catch in the pool worker would reduce
+that to one lost connection, but nothing can make those failures happen on
+demand, so it would ship untested, and it is left out on those grounds.

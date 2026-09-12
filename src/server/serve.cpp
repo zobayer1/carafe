@@ -28,6 +28,39 @@ constexpr auto accept_retry_pause = std::chrono::milliseconds(10);
 
 namespace {
 
+enum class AcceptRetry { Never, Immediately, AfterAPause };
+
+// Only the listener failing may end the server. A failure of the connection being accepted belongs to one client, and
+// exhaustion belongs to the moment: both leave a socket that still accepts.
+//
+// A list rather than a fallthrough, because errno is not an enum and nothing makes a new value announce itself.
+// Guessing "transient" for one that is not trades a server that stopped for a server that spins.
+[[nodiscard]] AcceptRetry accept_retry_for(int os_error) noexcept {
+    switch (os_error) {
+        // Given back as connections finish, so the wait is short and asking again at once only spends a core.
+        case EMFILE:
+        case ENFILE:
+        case ENOMEM:
+        case ENOBUFS:
+            return AcceptRetry::AfterAPause;
+
+        // The connection, not the socket that accepted it: a firewall refusing this one, a client gone from the queue,
+        // or any protocol error accept(2) says it may surface for the new socket.
+        case ECONNABORTED:
+        case EPERM:
+        case EPROTO:
+        case ETIMEDOUT:
+        case ENETDOWN:
+        case ENETUNREACH:
+        case EHOSTDOWN:
+        case EHOSTUNREACH:
+            return AcceptRetry::Immediately;
+
+        default:
+            return AcceptRetry::Never;
+    }
+}
+
 // No default label, so a new enumerator breaks this build rather than becoming a silent 400.
 [[nodiscard]] int status_for(http::RequestError error) noexcept {
     switch (error) {
@@ -137,36 +170,13 @@ namespace {
     return response;
 }
 
-enum class AcceptRetry { Never, Immediately, AfterAPause };
-
-// Only the listener failing may end the server. A failure of the connection being accepted belongs to one client, and
-// exhaustion belongs to the moment: both leave a socket that still accepts.
-//
-// A list rather than a fallthrough, because errno is not an enum and nothing makes a new value announce itself.
-// Guessing "transient" for one that is not trades a server that stopped for a server that spins.
-[[nodiscard]] AcceptRetry accept_retry_for(int os_error) noexcept {
-    switch (os_error) {
-        // Given back as connections finish, so the wait is short and asking again at once only spends a core.
-        case EMFILE:
-        case ENFILE:
-        case ENOMEM:
-        case ENOBUFS:
-            return AcceptRetry::AfterAPause;
-
-        // The connection, not the socket that accepted it: a firewall refusing this one, a client gone from the queue,
-        // or any protocol error accept(2) says it may surface for the new socket.
-        case ECONNABORTED:
-        case EPERM:
-        case EPROTO:
-        case ETIMEDOUT:
-        case ENETDOWN:
-        case ENETUNREACH:
-        case EHOSTDOWN:
-        case EHOSTUNREACH:
-            return AcceptRetry::Immediately;
-
-        default:
-            return AcceptRetry::Never;
+// A handler is the caller's code, so whatever it throws is this request's failure and no one else's. The request was
+// read to its end, so the stream is still in step and the connection stays usable.
+[[nodiscard]] http::Response run_handler(const http::Handler& handler, const http::Request& request) {
+    try {
+        return handler(request);
+    } catch (...) {
+        return status_response(500);
     }
 }
 
@@ -209,8 +219,8 @@ void serve_connection(Connection& conn, const Router& router) {
         // Unconditional: an unmatched request captured nothing, so this costs an empty vector rather than a branch.
         request.params = std::move(match.params);
 
-        http::Response response =
-            match ? (*match.handler)(request) : unmatched_response(router, request.target, match.path_matched);
+        http::Response response = match ? run_handler(*match.handler, request)
+                                        : unmatched_response(router, request.target, match.path_matched);
 
         if (!answer(conn, std::move(response), client_wants_close(request), request.method != http::Method::Head)) {
             return;

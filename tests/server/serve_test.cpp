@@ -12,6 +12,7 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -814,6 +815,100 @@ TEST(ServeConnection, ClosesOnAnOversizedBodyFromAnHttpTenClient) {
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 413 Content Too Large");
     EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
+}
+
+// Throws instead of answering, so any response that comes back is the server answering on its behalf.
+Handler throwing(std::string what = "handler failed") {
+    return [what = std::move(what)](const Request&) -> carafe::http::Response { throw std::runtime_error(what); };
+}
+
+// A handler is the caller's code. Whatever it throws is this request's failure, answered like any other failed request
+// rather than unwound out of the worker thread, where it would end the process.
+TEST(ServeConnection, AnswersAThrowingHandlerWithFiveHundred) {
+    auto pair = connected_pair();
+    Router router;
+    router.add(Method::Get, "/", throwing());
+    send_all(pair.first, get_root);
+
+    const std::string received = serve_and_read(pair, router);
+
+    EXPECT_EQ(status_line(received), "HTTP/1.1 500 Internal Server Error");
+}
+
+// The request was read to its end before the handler ran, so the stream is still in step and a second request on the
+// same connection is answered normally.
+TEST(ServeConnection, KeepsTheConnectionOpenAfterAFiveHundred) {
+    auto pair = connected_pair();
+    Router router;
+    router.add(Method::Get, "/boom", throwing());
+    router.add(Method::Get, "/", echo());
+    send_all(pair.first, "GET /boom HTTP/1.1\r\nHost: first.test\r\n\r\n");
+    send_all(pair.first, get_root);
+
+    const std::string received = serve_and_read(pair, router);
+
+    EXPECT_EQ(response_count(received), 2U);
+    EXPECT_EQ(status_line(received), "HTTP/1.1 500 Internal Server Error");
+    EXPECT_NE(received.find("HTTP/1.1 200 OK"), std::string::npos);
+}
+
+// A handler may throw anything, not only something derived from std::exception, and an int escaping the worker ends
+// the process just the same.
+TEST(ServeConnection, AnswersAThrowOfSomethingOtherThanAnExceptionWithFiveHundred) {
+    auto pair = connected_pair();
+    Router router;
+    router.add(Method::Get, "/", [](const Request&) -> carafe::http::Response { throw 42; });
+    send_all(pair.first, get_root);
+
+    const std::string received = serve_and_read(pair, router);
+
+    EXPECT_EQ(status_line(received), "HTTP/1.1 500 Internal Server Error");
+}
+
+// An exception's message is for whoever runs the server. Sent to the client it leaks internals, so the body names the
+// status and nothing else.
+TEST(ServeConnection, SendsNoExceptionTextInTheFiveHundred) {
+    auto pair = connected_pair();
+    Router router;
+    router.add(Method::Get, "/", throwing("connection string: db://internal-host"));
+    send_all(pair.first, get_root);
+
+    const std::string received = serve_and_read(pair, router);
+
+    EXPECT_EQ(received.find("internal-host"), std::string::npos);
+    EXPECT_EQ(body_of(received), "500 Internal Server Error\n");
+}
+
+// HEAD runs the GET handler, so a GET that throws answers HEAD with the same 500 head and, as for every HEAD, no body.
+// The length still describes the body a GET would have carried.
+TEST(ServeConnection, AnswersAHeadWhoseGetThrowsWithFiveHundredAndNoBody) {
+    auto pair = connected_pair();
+    Router router;
+    router.add(Method::Get, "/", throwing());
+    send_all(pair.first, "HEAD / HTTP/1.1\r\nHost: example.test\r\n\r\n");
+
+    const std::string received = serve_and_read(pair, router);
+
+    EXPECT_EQ(status_line(received), "HTTP/1.1 500 Internal Server Error");
+    EXPECT_TRUE(body_of(received).empty());
+    EXPECT_EQ(declared_length(received), std::string_view{"500 Internal Server Error\n"}.size());
+}
+
+// A 500 changes nothing about who decides when the connection ends: a client that asked to close is closed, and the
+// request queued behind it goes unread.
+TEST(ServeConnection, ClosesAfterAFiveHundredWhenTheClientAskedTo) {
+    auto pair = connected_pair();
+    Router router;
+    router.add(Method::Get, "/boom", throwing());
+    router.add(Method::Get, "/", echo());
+    send_all(pair.first, "GET /boom HTTP/1.1\r\nHost: first.test\r\nConnection: close\r\n\r\n");
+    send_all(pair.first, get_root);
+
+    const std::string received = serve_and_read(pair, router);
+
+    EXPECT_EQ(response_count(received), 1U);
+    EXPECT_EQ(status_line(received), "HTTP/1.1 500 Internal Server Error");
+    EXPECT_NE(received.find("\r\nconnection: close\r\n"), std::string::npos);
 }
 
 }  // namespace

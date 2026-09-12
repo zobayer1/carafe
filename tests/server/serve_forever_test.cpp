@@ -17,6 +17,7 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -248,6 +249,28 @@ TEST(ServeForever, AppliesTheDeadlinesItWasGiven) {
 
     // Under the default thirty seconds the client's own five second deadline fires first and this reads empty.
     EXPECT_EQ(status_line(client), "HTTP/1.1 408 Request Timeout");
+}
+
+// An exception escaping a handler would otherwise unwind out of the worker thread and end the process, and every
+// connection another client held would go with it. So the bystander here is answered before the throw and again after
+// it, on the connection it already had.
+TEST(ServeForever, KeepsServingOtherClientsWhenAHandlerThrows) {
+    auto router = std::make_shared<Router>();
+    router->add(Method::Get, "/hello", echo());
+    router->add(Method::Get, "/boom",
+                [](const Request&) -> carafe::http::Response { throw std::runtime_error("handler failed"); });
+    const std::uint16_t port = start_server(router);
+
+    const Socket bystander = connect_to(port);
+    send_all(bystander, "GET /hello HTTP/1.1\r\nHost: a.test\r\n\r\n");
+    ASSERT_EQ(status_line(bystander), "HTTP/1.1 200 OK");
+
+    const Socket thrower = connect_to(port);
+    send_all(thrower, "GET /boom HTTP/1.1\r\nHost: b.test\r\n\r\n");
+    EXPECT_EQ(status_line(thrower), "HTTP/1.1 500 Internal Server Error");
+
+    send_all(bystander, "GET /hello HTTP/1.1\r\nHost: a.test\r\n\r\n");
+    EXPECT_EQ(status_line(bystander), "HTTP/1.1 200 OK");
 }
 
 }  // namespace
