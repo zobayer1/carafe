@@ -161,8 +161,10 @@ make PRESET=release test
 ## Design notes
 
 Every non-obvious decision, and what was rejected to reach it, lives in
-[docs/design-notes.md](docs/design-notes.md) — including how the tree is laid
-out, where the public/internal boundary runs, and which flags are `PRIVATE`.
+[docs/design/](docs/design/README.md), split by subject and numbered in the
+order each subject entered the history. The first file covers how the tree is
+laid out, where the public/internal boundary runs, and which flags are
+`PRIVATE`.
 
 [docs/architecture.html](docs/architecture.html) draws the same ground: the four
 layers and which way their dependencies point, what owns what while a client is

@@ -339,8 +339,8 @@ Rows five and six are the same status with opposite consequences. A body over
 the limit is refused on its declared `Content-Length` before a byte of it is
 buffered — so the length is known, the reader steps over it, and the connection
 survives. Past the drain ceiling there is no length worth reading past, so that
-refusal closes. See *Refusing a request is not the same as losing the stream* in
-[design-notes.md](design-notes.md).
+refusal closes. See [Refusing a request is not the same as losing the
+stream](../docs/design/07-bodies-and-persistence.md#refusing-a-request-is-not-the-same-as-losing-the-stream).
 
 ## Reproducing the table
 
