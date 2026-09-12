@@ -145,7 +145,7 @@ make PRESET=release test
 - [x] Routing: path parameters, one segment each
 - [x] Routing: percent-decoded captures
 - [x] Routing: typed parameters, matched on the shape of a segment
-- [ ] Routing: multi-segment parameters, one capture for the rest of the path
+- [x] Routing: multi-segment parameters, one capture for the rest of the path
 - [x] Routing: normalising a pattern and a request path against each other
 - [x] Concurrency: a thread per connection, detached
 - [x] Concurrency: a receive deadline, so an idle connection stops holding a thread

@@ -70,6 +70,15 @@ int main() {
         return text_response(200, std::move(body));
     });
 
+    // A subtree rather than a segment. Nothing is read from disk: this names the sub-path it was given, which is the
+    // part a file handler would join under its root.
+    app.get("/files/<path:rest>", [](const Request& request) {
+        std::string body = "you asked for the file at ";
+        body += request.params.get("rest").value_or("?");
+        body += '\n';
+        return text_response(200, std::move(body));
+    });
+
     // Hands the bytes straight back, so what comes out is proof of what went in.
     app.post("/echo", [](const Request& request) { return text_response(200, request.body); });
 
@@ -124,6 +133,7 @@ int main() {
               << "\ntry:  curl -i http://localhost:" << port << '/' << "\n      curl -i http://localhost:" << port
               << "/hello/world"
               << "\n      curl -i http://localhost:" << port << "/users/42"
+              << "\n      curl -i http://localhost:" << port << "/files/css/site.css"
               << "\n      curl -i --data 'hi' http://localhost:" << port << "/echo"
               << "\n      curl -i -X PUT --data 'v' http://localhost:" << port << "/store/k"
               << "\n      see examples/README.md for the rest\n"

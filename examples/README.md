@@ -34,6 +34,7 @@ const carafe::RunError stopped = app.run(8080);
 | GET    | `/hello/<name>`  | a greeting using the captured segment         |
 | GET    | `/users/<int:id>` | the captured id, for a segment of digits     |
 | GET    | `/users/<name>`  | the captured name, for anything else          |
+| GET    | `/files/<path:rest>` | the sub-path it was given, read from nowhere |
 | POST   | `/echo`          | the request body, unchanged                   |
 | POST   | `/size`          | the body's length in bytes                    |
 | PUT    | `/store/<key>`   | the captured key and the body together        |
@@ -126,6 +127,48 @@ keeps its zeros, and a handler wanting a number parses it.
 An unknown converter is not an error, because `add` has no channel to report
 one on. A route registered at `/users/<integer:id>` is a literal path spelled
 exactly that, which no request will ever ask for.
+
+## A parameter for the rest of the path
+
+`<path:rest>` takes every segment that is left, so one route stands for a
+whole subtree. The example echoes the sub-path it was given and reads nothing
+from disk, because the capture is what a file handler would join under its
+root:
+
+```console
+/files/css/site.css          you asked for the file at css/site.css
+/files/a                     you asked for the file at a
+/files/a//b                  you asked for the file at a//b
+/files/a/                    you asked for the file at a/
+/files/x/../css/site.css     you asked for the file at css/site.css
+/files/a%20b/c               you asked for the file at a b/c
+/files/a?next=/etc/passwd    you asked for the file at a
+/files/a%2Fb                 404 Not Found
+/files/a%2F..%2Fb            404 Not Found
+/files//etc/passwd           404 Not Found
+/files/                      404 Not Found
+```
+
+The first seven rows answer. Row five is normalisation arriving first: the dot
+segment is gone before the router looks, so a rest never holds one. Rows three
+and four keep an empty segment and a trailing slash, because the path has them
+and neither leads anywhere a join would leave its root. Row seven leaves a
+query that looks like a path in the query.
+
+The last four rows are refusals, and each reason is about what a file handler
+will do with the value. Rows eight and nine would decode to a separator the
+client sent escaped, and row nine would put back `a/../b`, the traversal
+normalisation had removed. Row ten would begin with `/`, and `std::filesystem`
+throws the root away when the right-hand side of a join is absolute. Row
+eleven has nothing to capture.
+
+A rest has to be the last segment of its pattern. One registered as
+`/a/<path:x>/b` is accepted and simply never matches, since the rest leaves
+nothing for the segment after it.
+
+So a rest never begins with `/`, never holds a `.` or `..` segment, and never
+holds a `/` that arrived escaped. Whether the file exists, or is a symlink out
+of the tree, is still for the handler to check.
 
 ## One path, one spelling
 

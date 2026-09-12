@@ -1465,3 +1465,63 @@ that says whether a segment binds a name, stop compiling until it is
 classified. That is the same guarantee the method and failure switches already
 rely on, and it is why the predicate is a switch rather than a comparison
 against `None`.
+
+## A capture that names a subtree has to stay inside it
+
+Every parameter so far stood for one segment, so a route could not say "this
+directory and anything under it". `<path:rest>` can: it takes every segment
+that is left, and a file handler is the obvious thing that will consume it.
+That is what makes this converter different from the others. Its value is not
+text a handler looks at, it is a location a handler joins under a directory,
+so the question it has to answer is not what it matches but where it can lead.
+
+The walk was built on lockstep, one piece against one pattern segment, and a
+rest breaks that by consuming everything at once. So it is taken before the
+per-segment check rather than inside it, and it ends the walk. A pattern with
+a segment after the rest then needs no validation at all: the walk runs out of
+path with pattern left over, and the length check that already existed reports
+a miss. `add` still has no error channel and still needs none.
+
+The first version replaced the switch with an if chain, since only two of its
+arms did anything. That traded away the reason the switch existed. A switch
+with no default refuses to compile until a new converter says what it accepts;
+the chain compiles clean and lets it accept anything non-empty, which a probe
+confirmed with a converter that took the text `not-hex-at-all`. The rest block
+had also pushed `matches` past clang-tidy's cognitive complexity threshold,
+with the switch or without it. Moving the per-segment rule into `accepts`, one
+return per arm, fixed both: the loop got shorter and the switch got its
+guarantee back. `accepts` answers false for a rest, so if the rest block is
+ever moved below the call the route misses rather than accepting everything.
+
+The decision that matters is refusing a separator that appears during
+decoding. Normalisation deliberately leaves `%2F` escaped, so the path keeps
+the boundaries the client actually sent. A capture is then decoded, and for
+`/files/a%2F..%2Fb` that yields `a/../b`: the dot segment normalisation
+removed from the path is back inside the value. That was already true of a
+single-segment capture, and it did not matter while nothing treated one as a
+location. It matters for a rest. The check counts separators before and after
+decoding, and since decoding can only add them, any difference means a
+boundary the walk never saw. It does not care how the escape was spelled.
+
+A rest must not begin with a slash either, for a reason that is easy to miss.
+`std::filesystem` discards the left-hand side of a join when the right-hand
+side is absolute, so `/srv/static` joined with `/etc/passwd` is `/etc/passwd`.
+The emptiness check every parameter already had is what prevents it, because a
+rest beginning with `/` is a rest whose first piece was empty.
+
+Empty segments inside a rest are kept, and so is a trailing slash.
+Normalisation keeps them in the path, the rest reports the path as it stands,
+and neither escapes a directory it is joined under: `/srv/static` joined with
+`a//b` is still inside `/srv/static`. The guarantee is therefore exact rather
+than tidy. A rest never begins with `/`, never holds a `.` or `..` segment,
+and never holds a `/` that arrived escaped.
+
+Single-segment captures keep decoding `%2F` into `/`. The two converters
+promise different things: one hands over the text of a segment, which may
+legitimately contain a slash, and the other hands over a location, which may
+not gain one.
+
+What a rest does not settle is everything that belongs to the file itself.
+Whether the name exists, whether it is a symlink out of the tree, and whether
+it is a directory are questions for whatever serves the file, and they cannot
+be answered from the path alone.

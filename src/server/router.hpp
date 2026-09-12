@@ -14,6 +14,7 @@ enum class Capture {
     None,
     Text,    // one segment, any non-empty
     Number,  // one segment, ASCII digits only
+    Rest,    // one or more, to the end of the path
 };
 
 // One segment of a path pattern: literal text, or the name a capture binds to and what it will accept.
@@ -47,6 +48,11 @@ public:
     // registered and the digits decide which one answers. A converter constrains matching alone: a capture is still
     // text, and a handler wanting a number parses it. Anything else between angle brackets is literal text, an unknown
     // converter and an empty name included.
+    //
+    // "<path:name>" captures the rest of the path, one segment or several, and has to come last to match anything.
+    // The capture never begins with '/', never holds a "." or ".." segment, and never holds a '/' that arrived escaped,
+    // so joining it under a directory stays under that directory. Empty segments inside it are kept, as the path has
+    // them.
     //
     // Appended, and find() scans in order, so a path registered twice keeps its first handler and the first pattern
     // that matches wins however specific a later one is. Harmless, rather than an error with no channel to report on.

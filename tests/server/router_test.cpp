@@ -557,6 +557,143 @@ TEST(Router, AllowsTheMethodsOfATypedPattern) {
     EXPECT_EQ(router.allowed_methods("/users/bob"), Methods{});
 }
 
+// "<path:rest>" takes every segment that is left, so one pattern can stand for a whole subtree.
+TEST(Router, MatchesTheRestOfThePath) {
+    Router router;
+    router.add(Method::Get, "/files/<path:rest>", answering("files"));
+
+    EXPECT_EQ(answer_of(router.find(Method::Get, "/files/a/b/c")), "files");
+    EXPECT_EQ(bound_param(router, "/files/a/b/c", "rest"), "a/b/c");
+}
+
+// One segment is still "the rest". A pattern that needed two would force a second route for the shallow case.
+TEST(Router, MatchesARestOfOneSegment) {
+    Router router;
+    router.add(Method::Get, "/files/<path:rest>", answering("files"));
+
+    EXPECT_EQ(bound_param(router, "/files/a", "rest"), "a");
+}
+
+// A rest has to stand for something, like any other parameter. Without the trailing slash there is no piece at all,
+// and the walk runs out of path before it reaches the parameter.
+TEST(Router, DoesNotBindARestParameterToNothing) {
+    Router router;
+    router.add(Method::Get, "/files/<path:rest>", answering("files"));
+
+    EXPECT_FALSE(router.find(Method::Get, "/files/"));
+    EXPECT_FALSE(router.find(Method::Get, "/files"));
+}
+
+// The sharper reason for refusing an empty first piece. A capture of "/a" looks absolute, and std::filesystem throws
+// the root away when the right-hand side of a join is absolute: "/srv/static" / "/etc/passwd" is "/etc/passwd".
+TEST(Router, NeverBeginsARestWithASlash) {
+    Router router;
+    router.add(Method::Get, "/files/<path:rest>", answering("files"));
+
+    EXPECT_FALSE(router.find(Method::Get, "/files//a"));
+    EXPECT_FALSE(router.find(Method::Get, "/files//etc/passwd"));
+}
+
+// Normalisation keeps empty segments, and the rest reports the path as it stands rather than tidying it. Neither form
+// escapes a directory it is joined under: "/srv/static" / "a//b" is still inside "/srv/static".
+TEST(Router, KeepsEmptySegmentsInsideARest) {
+    Router router;
+    router.add(Method::Get, "/files/<path:rest>", answering("files"));
+
+    EXPECT_EQ(bound_param(router, "/files/a//b", "rest"), "a//b");
+    EXPECT_EQ(bound_param(router, "/files/a/", "rest"), "a/");
+}
+
+// A rest consumes everything, so a segment after it has nothing left to match. Nothing refuses the pattern at add();
+// it simply never answers, which the walk's own length check decides.
+TEST(Router, NeverMatchesWhenSomethingFollowsARest) {
+    Router router;
+    router.add(Method::Get, "/a/<path:x>/b", answering("unreachable"));
+
+    EXPECT_FALSE(router.find(Method::Get, "/a/x/b"));
+    EXPECT_FALSE(router.find(Method::Get, "/a/x/y/b"));
+    EXPECT_FALSE(router.find(Method::Get, "/a/b"));
+}
+
+// The rest is decoded like any capture, across every segment it spans.
+TEST(Router, DecodesTheRest) {
+    Router router;
+    router.add(Method::Get, "/files/<path:rest>", answering("files"));
+
+    EXPECT_EQ(bound_param(router, "/files/a%20b/c", "rest"), "a b/c");
+    EXPECT_EQ(bound_param(router, "/files/caf%C3%A9/menu", "rest"), "caf\xC3\xA9/menu");
+}
+
+// Normalisation resolves unreserved escapes and the capture decodes the rest, once. "%25" is a percent sign, so what
+// comes out is the text "%2E%2E", never a dot segment produced by a second pass.
+TEST(Router, DecodesARestOnlyOnce) {
+    Router router;
+    router.add(Method::Get, "/files/<path:rest>", answering("files"));
+
+    EXPECT_EQ(bound_param(router, "/files/%252E%252E", "rest"), "%2E%2E");
+    EXPECT_EQ(bound_param(router, "/files/a/%2541", "rest"), "a/%41");
+}
+
+// The reason a rest is checked at all. Normalisation leaves "%2F" escaped so the path keeps the boundaries the client
+// sent, but decoding the capture would turn "a%2F..%2Fb" into "a/../b" and hand back the traversal normalisation had
+// removed. A separator that appears during decoding is refused, however it was spelled.
+TEST(Router, RefusesARestThatGainsASeparatorWhenDecoded) {
+    Router router;
+    router.add(Method::Get, "/files/<path:rest>", answering("files"));
+
+    EXPECT_FALSE(router.find(Method::Get, "/files/a%2F..%2Fb"));
+    EXPECT_FALSE(router.find(Method::Get, "/files/a%2f..%2fb"));
+    EXPECT_FALSE(router.find(Method::Get, "/files/a%2Fb"));
+    EXPECT_FALSE(router.find(Method::Get, "/files/ok/a%2Fb"));
+}
+
+// Dot segments are gone before the walk starts, so the rest never contains one. The last row shows a rest ending in
+// ".." keeping the directory's trailing slash, as RFC 3986 §5.2.4 has it.
+TEST(Router, NormalisesBeforeCapturingTheRest) {
+    Router router;
+    router.add(Method::Get, "/files/<path:rest>", answering("files"));
+
+    EXPECT_EQ(bound_param(router, "/files/x/%2e%2e/b", "rest"), "b");
+    EXPECT_EQ(bound_param(router, "/files/a/./b", "rest"), "a/b");
+    EXPECT_EQ(bound_param(router, "/files/a/b/..", "rest"), "a/");
+}
+
+// The query is cut before the rest is taken, so a query that looks like a path stays in the query.
+TEST(Router, CapturesTheRestWithoutTheQuery) {
+    Router router;
+    router.add(Method::Get, "/files/<path:rest>", answering("files"));
+
+    EXPECT_EQ(bound_param(router, "/files/a/b?x=1", "rest"), "a/b");
+    EXPECT_EQ(bound_param(router, "/files/a?next=/etc/passwd", "rest"), "a");
+}
+
+// A rest earns no more precedence than any converter. Where a segment pattern is registered first it takes the single
+// segment and leaves the deeper paths to the rest; the other way round, the rest takes both.
+TEST(Router, ChoosesBetweenASegmentAndARestByRegistrationOrder) {
+    Router segment_first;
+    segment_first.add(Method::Get, "/files/<name>", answering("segment"));
+    segment_first.add(Method::Get, "/files/<path:rest>", answering("rest"));
+
+    EXPECT_EQ(answer_of(segment_first.find(Method::Get, "/files/a")), "segment");
+    EXPECT_EQ(answer_of(segment_first.find(Method::Get, "/files/a/b")), "rest");
+
+    Router rest_first;
+    rest_first.add(Method::Get, "/files/<path:rest>", answering("rest"));
+    rest_first.add(Method::Get, "/files/<name>", answering("segment"));
+
+    EXPECT_EQ(answer_of(rest_first.find(Method::Get, "/files/a")), "rest");
+}
+
+// allowed_methods walks the same rule, so a rest the router refuses owes no 405 either.
+TEST(Router, AllowsTheMethodsOfARestPattern) {
+    Router router;
+    router.add(Method::Get, "/files/<path:rest>", answering("get"));
+    router.add(Method::Post, "/files/<path:rest>", answering("post"));
+
+    EXPECT_EQ(router.allowed_methods("/files/a/b"), (Methods{Method::Get, Method::Head, Method::Post}));
+    EXPECT_EQ(router.allowed_methods("/files/a%2Fb"), Methods{});
+}
+
 // Odd rather than wrong, and add() has no channel to refuse it on. Both are captured and get() answers with the first,
 // as it does for repeated headers.
 TEST(Router, CapturesBothWhenAPatternBindsOneNameTwice) {

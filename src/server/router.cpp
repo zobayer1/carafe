@@ -64,7 +64,24 @@ using size_type = std::string_view::size_type;
             return false;
         case Capture::Text:
         case Capture::Number:
+        case Capture::Rest:
             return true;
+    }
+    return false;
+}
+
+// Whether one piece of the path is what this segment accepts. Rest is never asked: it takes more than one piece, so
+// matches() deals with it first. No default, so a new converter has to say what it accepts.
+[[nodiscard]] bool accepts(const Segment& segment, std::string_view piece) noexcept {
+    switch (segment.capture) {
+        case Capture::None:
+            return segment.text == piece;
+        case Capture::Text:
+            return true;
+        case Capture::Number:
+            return all_digits(piece);
+        case Capture::Rest:
+            return false;
     }
     return false;
 }
@@ -85,25 +102,33 @@ using size_type = std::string_view::size_type;
 
         const Segment& segment = pattern[index];
 
-        // A parameter has to stand for something, whatever it was going to accept: "/users//" binds no id.
+        // A parameter has to stand for something, whatever it was going to accept: "/users//" binds no id. For a rest
+        // it is also what keeps the capture from beginning with '/', which a path join would read as absolute.
         if (binds_a_name(segment.capture) && piece.empty()) {
             return false;
         }
 
-        switch (segment.capture) {
-            case Capture::None:
-                if (segment.text != piece) {
-                    return false;
-                }
-                break;
-            case Capture::Text:
-                // Anything at all, now that it is known to be something.
-                break;
-            case Capture::Number:
-                if (!all_digits(piece)) {
-                    return false;
-                }
-                break;
+        // Consumes what is left of the path, so the walk ends here. A pattern with more segments after it never
+        // matches, and the length check below the loop already reports that.
+        if (segment.capture == Capture::Rest) {
+            const std::string_view rest = path.substr(start);
+            std::string decoded = percent_decode(rest);
+
+            // Decoding only ever adds separators. One that appears here is a boundary the walk never saw, which is how
+            // "a%2F..%2Fb" would put back the dot segment normalisation removed.
+            if (std::count(decoded.begin(), decoded.end(), '/') != std::count(rest.begin(), rest.end(), '/')) {
+                return false;
+            }
+
+            if (out != nullptr) {
+                captured.entries.push_back({segment.text, std::move(decoded)});
+            }
+            ++index;
+            break;
+        }
+
+        if (!accepts(segment, piece)) {
+            return false;
         }
 
         if (binds_a_name(segment.capture) && out != nullptr) {
@@ -137,6 +162,9 @@ using size_type = std::string_view::size_type;
     }
     if (converter == "int") {
         return Capture::Number;
+    }
+    if (converter == "path") {
+        return Capture::Rest;
     }
     return Capture::None;
 }
