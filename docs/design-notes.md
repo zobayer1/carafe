@@ -1525,3 +1525,58 @@ What a rest does not settle is everything that belongs to the file itself.
 Whether the name exists, whether it is a symlink out of the tree, and whether
 it is a directory are questions for whatever serves the file, and they cannot
 be answered from the path alone.
+
+## The gate could not see the headers it guarded
+
+An audit of `[[nodiscard]]`, `noexcept`, `constexpr`, `explicit` and const
+member functions found no correctness bug and one defect, but the more
+important result was a blind spot in the tidy gate itself.
+
+clang-tidy diagnoses a header only when the header's path matches
+`HeaderFilterRegex`, whichever file includes it. The filter matched
+`include/carafe/` and the generated version header and nothing else, so
+nothing declared in `src/` or `tests/` headers was ever checked. That is where
+the defect lived: `ConnectionPool`'s constructor could be called with one
+argument, so a router pointer would quietly build a running pool. The proof
+was mechanical. With `explicit` removed, a run shaped exactly like the gate
+passed; with the filter widened, the same run fails on that line. Widening it
+also surfaced four findings that had been sitting there unseen: unnamed
+parameters on the socket's move operations, a redundant initialiser on a
+`time_point`, and a pool that declared its destructor and deleted copying
+without saying anything about moving. All four are fixed, and the pool now
+deletes its moves with the reason stated, since every worker holds `this`.
+
+The new pattern admits `src/<dir>/<file>.hpp` and test headers by shape rather
+than by naming the repository directory, because a checkout need not be called
+carafe. A measured run over the whole gate found diagnostics only in project
+headers, so the fetched GoogleTest sources stay out.
+
+`google-explicit-constructor` is enabled on its own rather than as part of the
+google group, whose other checks restate style this project already decides.
+Its measured cost across the library, the tests and the example was the one
+real finding.
+
+Four rules have no check that can hold them, so they are recorded here.
+
+`[[nodiscard]]` goes on every function whose result the caller has to act on,
+free or member. `modernize-use-nodiscard` only considers member functions, so
+file-local helpers are a matter of review.
+
+`noexcept` goes wherever nothing can throw: no allocation, and no `substr`
+from a position not already proven in range. `bugprone-exception-escape` is
+weaker than its name. Probed directly, it reported a literal `throw` and
+missed both an allocation and an out-of-range `substr`, so a `noexcept` is
+justified by reading the body.
+
+`constexpr` goes in headers, where it also implies `inline` and lets any
+includer evaluate a helper at compile time, and on named constants. It stays
+off file-local functions in source files. Seven of them carried it with no
+rule and no effect: none was used in a constant expression. An earlier
+formulation, `constexpr` only on classifiers taking a character or an enum,
+was rejected because headers already used it on functions that walk strings
+and three eligible source helpers never had it.
+
+A member function is `const` by logical constness, not bitwise. The socket's
+read, write and timeout setter leave its fields untouched but change the
+socket they name, so they are non-const and say why where the const check
+would otherwise ask.

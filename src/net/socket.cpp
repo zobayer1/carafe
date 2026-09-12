@@ -29,7 +29,7 @@ namespace {
 
 }  // namespace
 
-std::optional<std::chrono::milliseconds> milliseconds_until(std::chrono::steady_clock::time_point deadline) {
+std::optional<std::chrono::milliseconds> milliseconds_until(std::chrono::steady_clock::time_point deadline) noexcept {
     const auto left = deadline - std::chrono::steady_clock::now();
     if (left < std::chrono::milliseconds(1)) {
         return std::nullopt;
@@ -61,7 +61,7 @@ Socket& Socket::operator=(Socket&& other) noexcept {
 // Not const: a const Socket& reads as safe to share, and these bytes leave the stream once taken. std::istream::read is
 // non-const for the same reason.
 // NOLINTNEXTLINE(readability-make-member-function-const)
-ReadResult Socket::read(char* buffer, std::size_t size) {
+ReadResult Socket::read(char* buffer, std::size_t size) noexcept {
     while (true) {
         const ssize_t bytes_read = ::recv(fd_, buffer, size, 0);
         if (bytes_read > 0) {
@@ -81,7 +81,7 @@ ReadResult Socket::read(char* buffer, std::size_t size) {
 }
 
 // NOLINTNEXTLINE(readability-make-member-function-const)
-WriteResult Socket::write(std::string_view bytes, std::chrono::milliseconds limit) {
+WriteResult Socket::write(std::string_view bytes, std::chrono::milliseconds limit) noexcept {
     const auto deadline = std::chrono::steady_clock::now() + limit;
 
     while (!bytes.empty()) {

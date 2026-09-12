@@ -13,7 +13,7 @@
 
 namespace carafe::net {
 
-AcceptResult Listener::accept() {
+AcceptResult Listener::accept() noexcept {
     while (true) {
         // accept4, not accept: flags are not inherited, so accept() would hand back a client without CLOEXEC however
         // the listener was made.

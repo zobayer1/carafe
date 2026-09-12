@@ -29,7 +29,7 @@ constexpr auto accept_retry_pause = std::chrono::milliseconds(10);
 namespace {
 
 // No default label, so a new enumerator breaks this build rather than becoming a silent 400.
-int status_for(http::RequestError error) {
+[[nodiscard]] int status_for(http::RequestError error) noexcept {
     switch (error) {
         case http::RequestError::UnknownMethod:
         case http::RequestError::UnsupportedTransferEncoding:
@@ -105,7 +105,7 @@ int status_for(http::RequestError error) {
 }
 
 // The body names the status: a bare 404 tells a terminal reader nothing.
-http::Response status_response(int status) {
+[[nodiscard]] http::Response status_response(int status) {
     std::string body = std::to_string(status);
     body += ' ';
     body += http::status_message(status);
@@ -115,7 +115,7 @@ http::Response status_response(int status) {
 
 // Comma-separated, as RFC 9110 spells the field. Method names are case-sensitive tokens, so these stay uppercase though
 // every field name we emit is lowered.
-std::string allow_value(const std::vector<http::Method>& methods) {
+[[nodiscard]] std::string allow_value(const std::vector<http::Method>& methods) {
     std::string value;
     for (const http::Method method : methods) {
         if (!value.empty()) {
@@ -128,7 +128,7 @@ std::string allow_value(const std::vector<http::Method>& methods) {
 
 // A path nobody registered is a 404; one registered under another method is a 405, and RFC 9110 makes Allow on that 405
 // a MUST rather than a courtesy.
-http::Response unmatched_response(const Router& router, std::string_view target, bool path_matched) {
+[[nodiscard]] http::Response unmatched_response(const Router& router, std::string_view target, bool path_matched) {
     if (!path_matched) {
         return status_response(404);
     }

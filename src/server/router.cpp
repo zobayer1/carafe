@@ -58,7 +58,7 @@ using size_type = std::string_view::size_type;
 }
 
 // No default: a new converter has to say whether it binds a name, rather than inherit an answer from the last one.
-[[nodiscard]] constexpr bool binds_a_name(Capture capture) noexcept {
+[[nodiscard]] bool binds_a_name(Capture capture) noexcept {
     switch (capture) {
         case Capture::None:
             return false;

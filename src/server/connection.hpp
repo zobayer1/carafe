@@ -8,10 +8,13 @@
 
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <optional>
 #include <string_view>
 
 namespace carafe::server {
+
+constexpr std::size_t max_buffer_length = 4096;
 
 // Two failures, not one, because they call for opposite actions: a malformed head gets a status written back, a failed
 // read means nobody is left to write to. An empty request with neither set is the client having finished.
@@ -42,7 +45,7 @@ public:
 
     // Straight to the socket: a response touches no parser state, so this cannot disturb a partially received next
     // request sitting in the reader.
-    [[nodiscard]] net::WriteResult write(std::string_view bytes);
+    [[nodiscard]] net::WriteResult write(std::string_view bytes) noexcept;
 
     // Bytes arrived that no handed-over request has claimed, so the client asked for something and is owed an answer.
     // False between requests, which is when a deadline firing is just an idle connection.
@@ -53,17 +56,17 @@ public:
 private:
     net::Socket socket_;
     http::RequestReader reader_;
-    std::array<char, 4096> buffer_{};
+    std::array<char, max_buffer_length> buffer_{};
     bool request_in_progress_ = false;
     Deadlines deadlines_;
 
     // When the request now arriving must be finished by. Set by the first byte of a request and not by each read: the
     // per-read deadline it replaces is exactly what a slow drip renews for ever.
-    std::chrono::steady_clock::time_point request_deadline_{};
+    std::chrono::steady_clock::time_point request_deadline_;
 
     // The deadline the next read must carry, applied to the socket. Zero on success; otherwise an errno the caller
     // reports as a read failure, because a read that cannot be bounded is one that may never return.
-    [[nodiscard]] int apply_read_deadline();
+    [[nodiscard]] int apply_read_deadline() noexcept;
 };
 
 }  // namespace carafe::server

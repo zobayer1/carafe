@@ -23,13 +23,17 @@ namespace carafe::server {
 // away. A full pool therefore makes new clients wait for an existing one to end, which is what `queue_wait` bounds.
 class ConnectionPool {
 public:
-    ConnectionPool(std::shared_ptr<const Router> router, PoolLimits limits = {}, Deadlines deadlines = {});
+    explicit ConnectionPool(std::shared_ptr<const Router> router, PoolLimits limits = {}, Deadlines deadlines = {});
 
     // Stops the workers and joins them. Queued connections are closed unserved, and ones being served are finished.
     ~ConnectionPool();
 
     ConnectionPool(const ConnectionPool&) = delete;
     ConnectionPool& operator=(const ConnectionPool&) = delete;
+
+    // Every worker holds `this`, so a moved pool would leave them running against an object that has gone.
+    ConnectionPool(ConnectionPool&&) = delete;
+    ConnectionPool& operator=(ConnectionPool&&) = delete;
 
     // Takes one accepted connection, and closes it when the queue is full: an accept loop that waited for room would
     // become the queue itself.

@@ -71,13 +71,13 @@ namespace {
 }
 
 // RFC 3986 §2.1: pct-encoded = "%" HEXDIG HEXDIG. Both hex cases are accepted because §6.2.2.1 makes them equivalent.
-[[nodiscard]] constexpr bool is_hex_digit(unsigned char ch) noexcept {
+[[nodiscard]] bool is_hex_digit(unsigned char ch) noexcept {
     return (ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'F') || (ch >= 'a' && ch <= 'f');
 }
 
 // RFC 9110 §5.6.2: tchar = ALPHA / DIGIT / "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "." / "^" / "_" / "`"
 // / "|" / "~"
-[[nodiscard]] constexpr bool is_tchar(unsigned char ch) noexcept {
+[[nodiscard]] bool is_tchar(unsigned char ch) noexcept {
     if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) {
         return true;
     }
@@ -104,13 +104,13 @@ namespace {
 }
 
 // RFC 9110 §5.6.3: OWS = *( SP / HTAB )
-[[nodiscard]] constexpr bool is_ows(unsigned char ch) noexcept {
+[[nodiscard]] bool is_ows(unsigned char ch) noexcept {
     return ch == ' ' || ch == '\t';
 }
 
 // RFC 9110 §5.5: field-vchar = VCHAR / obs-text, with SP and HTAB between them. An allowlist, so a control byte nobody
 // thought to name still fails.
-[[nodiscard]] constexpr bool is_valid_value_char(unsigned char ch) noexcept {
+[[nodiscard]] bool is_valid_value_char(unsigned char ch) noexcept {
     return ch == '\t' || (ch >= 0x20 && ch != 0x7F);
 }
 

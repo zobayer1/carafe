@@ -51,11 +51,11 @@ ConnectionResult Connection::next_request() {
     }
 }
 
-net::WriteResult Connection::write(std::string_view bytes) {
+net::WriteResult Connection::write(std::string_view bytes) noexcept {
     return socket_.write(bytes, deadlines_.request);
 }
 
-int Connection::apply_read_deadline() {
+int Connection::apply_read_deadline() noexcept {
     auto limit = deadlines_.idle;
 
     if (request_in_progress_) {

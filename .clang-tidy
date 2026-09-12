@@ -7,6 +7,7 @@ Checks: >
   clang-analyzer-*,
   concurrency-*,
   cppcoreguidelines-*,
+  google-explicit-constructor,
   misc-*,
   modernize-*,
   performance-*,
@@ -27,7 +28,10 @@ Checks: >
   -readability-use-anyofallof
 
 WarningsAsErrors: ''
-HeaderFilterRegex: '.*/(include|generated)/carafe/.*'
+# A header is diagnosed only when its path matches, whichever file includes it.
+# The library's internal headers live in src/ and the test helpers in tests/;
+# leaving them out means nothing declared in either is ever checked.
+HeaderFilterRegex: '.*/(include|generated)/carafe/.*|.*/src/[^/]+/[^/]+\.hpp|.*/tests/([^/]+/)?[^/]+\.hpp'
 FormatStyle: file
 
 CheckOptions:

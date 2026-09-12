@@ -26,7 +26,7 @@ enum class RunError {
 };
 
 // A line fit to print. One wording per failure, in the library rather than in each caller.
-[[nodiscard]] std::string_view describe(RunError error);
+[[nodiscard]] std::string_view describe(RunError error) noexcept;
 
 class App {
 public:

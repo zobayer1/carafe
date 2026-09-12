@@ -16,11 +16,11 @@ namespace carafe {
 
 namespace {
 
-constexpr bool valid_pool_limits(const PoolLimits& limits) {
+[[nodiscard]] bool valid_pool_limits(const PoolLimits& limits) noexcept {
     return limits.workers > 0 && limits.queued > 0 && limits.queue_wait > std::chrono::milliseconds::zero();
 }
 
-constexpr bool valid_deadlines(const Deadlines& deadlines) {
+[[nodiscard]] bool valid_deadlines(const Deadlines& deadlines) noexcept {
     return deadlines.idle > std::chrono::milliseconds::zero() && deadlines.request > std::chrono::milliseconds::zero();
 }
 
@@ -68,7 +68,7 @@ bool App::route(http::Method method, std::string_view path, http::Handler handle
     return true;
 }
 
-std::string_view describe(RunError error) {
+std::string_view describe(RunError error) noexcept {
     // No default: a new failure has to be given words, not fall through to someone else's.
     switch (error) {
         case RunError::InvalidLimits:

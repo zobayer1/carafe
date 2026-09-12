@@ -29,7 +29,7 @@ public:
         return port_;
     }
 
-    [[nodiscard]] AcceptResult accept();
+    [[nodiscard]] AcceptResult accept() noexcept;
 
 private:
     Socket socket_;
