@@ -5,7 +5,7 @@
 
 #include "net/listener.hpp"
 #include "net/socket.hpp"
-#include "server/router.hpp"
+#include "server/pipeline.hpp"
 #include "server/serve.hpp"
 
 #include <array>
@@ -38,7 +38,7 @@ using carafe::http::Request;
 using carafe::http::text_response;
 using carafe::net::listen_on;
 using carafe::net::Socket;
-using carafe::server::Router;
+using carafe::server::Pipeline;
 using carafe::server::serve_forever;
 
 // Loopback rather than a socketpair: serve_forever's whole job is the accept loop, so it needs something to accept.
@@ -91,13 +91,13 @@ std::string status_line(const Socket& sock) {
 // here would mean giving Listener a close() whose only caller is this file. A thread parked in accept() costs nothing
 // at exit. The listener moves into the thread rather than being leaked beside it, so nothing out here outlives what
 // the thread is still using.
-std::uint16_t start_server(std::shared_ptr<Router> router, PoolLimits limits = {}, Deadlines deadlines = {}) {
+std::uint16_t start_server(std::shared_ptr<Pipeline> pipeline, PoolLimits limits = {}, Deadlines deadlines = {}) {
     auto result = listen_on(0);
     EXPECT_TRUE(result.listener.has_value());
     const std::uint16_t port = result.listener->port();
 
-    std::thread([listener = std::move(*result.listener), router = std::move(router), limits, deadlines]() mutable {
-        serve_forever(listener, router, limits, deadlines);
+    std::thread([listener = std::move(*result.listener), pipeline = std::move(pipeline), limits, deadlines]() mutable {
+        serve_forever(listener, pipeline, limits, deadlines);
     }).detach();
 
     return port;
@@ -133,9 +133,9 @@ private:
 // The outage this milestone closes: one client holding a persistent connection open, having asked for nothing more,
 // used to leave every other client waiting for as long as it cared to hold on.
 TEST(ServeForever, AnswersASecondClientWhileTheFirstHoldsItsConnection) {
-    auto router = std::make_shared<Router>();
-    router->add(Method::Get, "/hello", echo());
-    const std::uint16_t port = start_server(router);
+    auto pipeline = std::make_shared<Pipeline>();
+    pipeline->add(Method::Get, "/hello", echo());
+    const std::uint16_t port = start_server(pipeline);
 
     const Socket holder = connect_to(port);
     send_all(holder, "GET /hello HTTP/1.1\r\nHost: a.test\r\n\r\n");
@@ -153,11 +153,11 @@ TEST(ServeForever, RunsHandlersConcurrently) {
     constexpr std::size_t clients = 8;
     auto rendezvous = std::make_shared<Rendezvous>(clients);
 
-    auto router = std::make_shared<Router>();
-    // Captured by value, since the server thread outlives this test and the router with it.
-    router->add(Method::Get, "/wait",
-                [rendezvous](const Request&) { return text_response(rendezvous->arrive() ? 200 : 503, ""); });
-    const std::uint16_t port = start_server(router);
+    auto pipeline = std::make_shared<Pipeline>();
+    // Captured by value, since the server thread outlives this test and the pipeline with it.
+    pipeline->add(Method::Get, "/wait",
+                  [rendezvous](const Request&) { return text_response(rendezvous->arrive() ? 200 : 503, ""); });
+    const std::uint16_t port = start_server(pipeline);
 
     std::vector<std::thread> callers;
     std::vector<std::string> lines(clients);
@@ -181,10 +181,10 @@ TEST(ServeForever, RunsHandlersConcurrently) {
 // One RequestReader per connection, not one per server: two half-sent heads interleaved must not splice into each
 // other, which is the hazard a shared parser would introduce the moment connections overlap.
 TEST(ServeForever, KeepsEachConnectionsParserSeparate) {
-    auto router = std::make_shared<Router>();
-    router->add(Method::Get, "/one", echo());
-    router->add(Method::Get, "/two", echo());
-    const std::uint16_t port = start_server(router);
+    auto pipeline = std::make_shared<Pipeline>();
+    pipeline->add(Method::Get, "/one", echo());
+    pipeline->add(Method::Get, "/two", echo());
+    const std::uint16_t port = start_server(pipeline);
 
     const Socket first = connect_to(port);
     const Socket second = connect_to(port);
@@ -208,14 +208,14 @@ TEST(ServeForever, ServesNoMoreAtOnceThanItsLimitsAllow) {
     const std::shared_future<void> held = release->get_future().share();
     auto entered = std::make_shared<std::atomic<bool>>(false);
 
-    auto router = std::make_shared<Router>();
-    router->add(Method::Get, "/hold", [held, entered](const Request&) {
+    auto pipeline = std::make_shared<Pipeline>();
+    pipeline->add(Method::Get, "/hold", [held, entered](const Request&) {
         *entered = true;
         held.wait();
         return text_response(200, "");
     });
-    router->add(Method::Get, "/hello", echo());
-    const std::uint16_t port = start_server(router, PoolLimits{1, 8, std::chrono::seconds(5)});
+    pipeline->add(Method::Get, "/hello", echo());
+    const std::uint16_t port = start_server(pipeline, PoolLimits{1, 8, std::chrono::seconds(5)});
 
     const Socket first = connect_to(port);
     send_all(first, "GET /hold HTTP/1.1\r\nHost: a.test\r\nConnection: close\r\n\r\n");
@@ -239,10 +239,10 @@ TEST(ServeForever, ServesNoMoreAtOnceThanItsLimitsAllow) {
 // The deadlines have further to travel than the limits: serve_forever hands them to the pool, which hands them to each
 // Connection it builds. A half-sent head answered rather than waited out is the whole chain arriving.
 TEST(ServeForever, AppliesTheDeadlinesItWasGiven) {
-    auto router = std::make_shared<Router>();
-    router->add(Method::Get, "/hello", echo());
+    auto pipeline = std::make_shared<Pipeline>();
+    pipeline->add(Method::Get, "/hello", echo());
     const std::uint16_t port =
-        start_server(router, PoolLimits{}, Deadlines{std::chrono::milliseconds(50), std::chrono::milliseconds(50)});
+        start_server(pipeline, PoolLimits{}, Deadlines{std::chrono::milliseconds(50), std::chrono::milliseconds(50)});
 
     const Socket client = connect_to(port);
     send_all(client, "GET /hel");
@@ -255,11 +255,11 @@ TEST(ServeForever, AppliesTheDeadlinesItWasGiven) {
 // connection another client held would go with it. So the bystander here is answered before the throw and again after
 // it, on the connection it already had.
 TEST(ServeForever, KeepsServingOtherClientsWhenAHandlerThrows) {
-    auto router = std::make_shared<Router>();
-    router->add(Method::Get, "/hello", echo());
-    router->add(Method::Get, "/boom",
-                [](const Request&) -> carafe::http::Response { throw std::runtime_error("handler failed"); });
-    const std::uint16_t port = start_server(router);
+    auto pipeline = std::make_shared<Pipeline>();
+    pipeline->add(Method::Get, "/hello", echo());
+    pipeline->add(Method::Get, "/boom",
+                  [](const Request&) -> carafe::http::Response { throw std::runtime_error("handler failed"); });
+    const std::uint16_t port = start_server(pipeline);
 
     const Socket bystander = connect_to(port);
     send_all(bystander, "GET /hello HTTP/1.1\r\nHost: a.test\r\n\r\n");

@@ -2,11 +2,10 @@
 #include <carafe/config.hpp>
 
 #include "net/listener.hpp"
-#include "server/connection.hpp"
-#include "server/router.hpp"
+#include "server/pipeline.hpp"
 #include "server/serve.hpp"
 
-#include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <string_view>
@@ -26,26 +25,26 @@ namespace {
 
 }  // namespace
 
-App::App() : router_(std::make_shared<server::Router>()) {}
+App::App() : pipeline_(std::make_shared<server::Pipeline>()) {}
 
 void App::get(std::string_view path, http::Handler handler) {
-    router_->add(http::Method::Get, path, std::move(handler));
+    pipeline_->add(http::Method::Get, path, std::move(handler));
 }
 
 void App::post(std::string_view path, http::Handler handler) {
-    router_->add(http::Method::Post, path, std::move(handler));
+    pipeline_->add(http::Method::Post, path, std::move(handler));
 }
 
 void App::put(std::string_view path, http::Handler handler) {
-    router_->add(http::Method::Put, path, std::move(handler));
+    pipeline_->add(http::Method::Put, path, std::move(handler));
 }
 
 void App::patch(std::string_view path, http::Handler handler) {
-    router_->add(http::Method::Patch, path, std::move(handler));
+    pipeline_->add(http::Method::Patch, path, std::move(handler));
 }
 
 void App::del(std::string_view path, http::Handler handler) {
-    router_->add(http::Method::Delete, path, std::move(handler));
+    pipeline_->add(http::Method::Delete, path, std::move(handler));
 }
 
 bool App::route(http::Method method, std::string_view path, http::Handler handler) {
@@ -64,7 +63,7 @@ bool App::route(http::Method method, std::string_view path, http::Handler handle
             break;
     }
 
-    router_->add(method, path, std::move(handler));
+    pipeline_->add(method, path, std::move(handler));
     return true;
 }
 
@@ -100,7 +99,7 @@ RunError App::run(std::uint16_t port, PoolLimits limits, Deadlines deadlines) {
 
     net::Listener& listener = *listen_result.listener;
 
-    server::serve_forever(listener, router_, limits, deadlines);
+    server::serve_forever(listener, pipeline_, limits, deadlines);
 
     return RunError::AcceptFailed;
 }

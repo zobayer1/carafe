@@ -10,6 +10,7 @@ namespace {
 
 using carafe::http::Response;
 using carafe::http::status_message;
+using carafe::http::status_response;
 
 // How many times a field appears, which is the only way to catch a header that is written twice with different values.
 std::size_t count_of(std::string_view text, std::string_view needle) {
@@ -162,6 +163,17 @@ TEST(StatusMessage, IsEmptyForACodeItDoesNotKnow) {
     EXPECT_TRUE(status_message(0).empty());
     EXPECT_TRUE(status_message(418).empty());
     EXPECT_TRUE(status_message(599).empty());
+}
+
+// The body is the status and its phrase, then a newline, so a terminal reader learns more than the number. An unknown
+// status keeps the space and loses only the phrase, as the status line does.
+TEST(Response, StatusResponseNamesTheStatusInItsBody) {
+    const auto found = status_response(404);
+    EXPECT_EQ(found.status, 404);
+    EXPECT_EQ(found.body, "404 Not Found\n");
+    EXPECT_EQ(found.headers.get("content-type"), "text/plain; charset=utf-8");
+
+    EXPECT_EQ(status_response(418).body, "418 \n");
 }
 
 }  // namespace

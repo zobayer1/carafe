@@ -173,3 +173,49 @@ support, and this commit sent none, because supplying it meant `Router`
 reporting a set and that is a change to the routing interface. It landed in
 the next commit; see [Refusing a method means naming the ones that
 work](05-routing.md#refusing-a-method-means-naming-the-ones-that-work).
+
+## The connection loop stopped knowing that routes exist
+
+`serve_connection` was doing two jobs. Transport: reading until a request or a
+failure, answering parse failures and a `408`, deciding whether to close, and
+dropping the body of a `HEAD` response. Application: routing, binding
+captures, calling the handler, and building a `404`, `405` or `500`.
+Middleware has to wrap the second job and leave the first alone, and there was
+no seam to wrap it at, so the two were separated before any middleware
+existed.
+
+`Pipeline::respond` is the application half, and the connection loop keeps the
+rest. The split sits exactly where the loop stops needing to know that routes
+exist: it hands over a parsed request and gets a response back. `HEAD` shows
+where the line runs. The pipeline returns the `GET` handler's whole response,
+body included, and the loop drops the body when it writes, because only the
+loop knows it is writing a `HEAD` response, and the length it reports has to
+describe the `GET` body.
+
+There is one way in. `Pipeline::add` forwards to a router the pipeline keeps
+private, and no constructor takes a router, so the router stays an
+implementation detail of the pipeline in the same way `App` keeps it out of
+its public header. Middleware registration will sit beside `add`, not beside a
+router nothing outside can see.
+
+`App` holds the pipeline through a `shared_ptr` and passes it to the pool as a
+pointer to const, so every worker calls `respond` on one shared instance at
+once. That is safe for the reason sharing the router was: nothing changes the
+pipeline after `run` starts, and the only thing `respond` writes, the
+captures, goes into a request each connection owns. `respond` takes the
+request by non-const reference for exactly that write, and assigns the
+captures unconditionally, so a miss leaves none behind in a request that
+arrived carrying some.
+
+`status_response` moved into the public header. The loop needs it for parse
+failures and the `408`, and the pipeline needs it for the `404`, `405` and
+`500`, which is the second-caller test `text_response` passed on its way to
+the same header. Its body, the status and its phrase followed by a newline, is
+now a documented contract with a test of its own, and middleware answering a
+`401` or `403` will reach for it.
+
+The pipeline is tested without a socket, which was half the point. The other
+half of the evidence is the existing suite: every connection, pool and serve-
+forever test was moved from a router to a pipeline, with nothing changed but
+names and two comments, and passed. That is what shows no behaviour moved with
+the code.

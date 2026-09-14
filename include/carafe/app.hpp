@@ -4,14 +4,13 @@
 #include <carafe/http/handler.hpp>
 #include <carafe/http/request.hpp>
 
-#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <string_view>
 
-// Forward declaration for Router defined in src/server/router.hpp file.
+// Forward declaration for Pipeline defined in src/server/pipeline.hpp file.
 namespace carafe::server {
-class Router;
+class Pipeline;
 }
 
 namespace carafe {
@@ -30,7 +29,7 @@ enum class RunError {
 
 class App {
 public:
-    // Out of line: make_shared needs Router complete, and this header only forward-declares it.
+    // Out of line: make_shared needs Pipeline complete, and this header only forward-declares it.
     App();
 
     ~App() = default;
@@ -62,7 +61,7 @@ public:
     [[nodiscard]] RunError run(std::uint16_t port, PoolLimits limits = {}, Deadlines deadlines = {});
 
 private:
-    std::shared_ptr<server::Router> router_;
+    std::shared_ptr<server::Pipeline> pipeline_;
 };
 
 }  // namespace carafe

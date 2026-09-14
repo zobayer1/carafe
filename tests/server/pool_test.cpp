@@ -7,7 +7,7 @@
 
 #include "net/socket.hpp"
 #include "server/connection.hpp"
-#include "server/router.hpp"
+#include "server/pipeline.hpp"
 
 #include <array>
 #include <atomic>
@@ -36,7 +36,7 @@ using carafe::http::Request;
 using carafe::http::text_response;
 using carafe::net::Socket;
 using carafe::server::ConnectionPool;
-using carafe::server::Router;
+using carafe::server::Pipeline;
 
 // Short enough that no test waits out a default, long enough that a handler held for a moment is not cut off under it.
 constexpr Deadlines brief{std::chrono::milliseconds(500), std::chrono::milliseconds(500)};
@@ -84,10 +84,10 @@ std::string_view status_line(std::string_view response) {
     return response.substr(0, response.find("\r\n"));
 }
 
-std::shared_ptr<const Router> routing(Handler handler) {
-    auto router = std::make_shared<Router>();
-    router->add(Method::Get, "/", std::move(handler));
-    return router;
+std::shared_ptr<const Pipeline> routing(Handler handler) {
+    auto pipeline = std::make_shared<Pipeline>();
+    pipeline->add(Method::Get, "/", std::move(handler));
+    return pipeline;
 }
 
 Handler echo() {

@@ -7,7 +7,7 @@
 
 #include "net/socket.hpp"
 #include "server/connection.hpp"
-#include "server/router.hpp"
+#include "server/pipeline.hpp"
 
 #include <array>
 #include <chrono>
@@ -30,7 +30,7 @@ using carafe::http::Request;
 using carafe::http::text_response;
 using carafe::net::Socket;
 using carafe::server::Connection;
-using carafe::server::Router;
+using carafe::server::Pipeline;
 using carafe::server::serve_connection;
 
 // Handlers echo the target, so a 200 says which route answered rather than only that something did.
@@ -58,10 +58,10 @@ Handler echo_body() {
     return [](const Request& request) { return text_response(200, request.body); };
 }
 
-Router routing(std::string_view path) {
-    Router router;
-    router.add(Method::Get, path, echo());
-    return router;
+Pipeline routing(std::string_view path) {
+    Pipeline pipeline;
+    pipeline.add(Method::Get, path, echo());
+    return pipeline;
 }
 
 std::pair<Socket, Socket> connected_pair() {
@@ -82,14 +82,14 @@ void send_all(const Socket& sock, std::string_view bytes) {
 
 // Serves the connection, then closes the server end so the client can read to end of stream. That is what makes "the
 // whole response" a well defined thing to assert on: a live connection would otherwise just block waiting for more.
-std::string serve_and_read(std::pair<Socket, Socket>& pair, const Router& router) {
+std::string serve_and_read(std::pair<Socket, Socket>& pair, const Pipeline& pipeline) {
     // The client half-closes first: it has said all it intends to. Without that a keep-alive responder is still waiting
     // for the next request, quite correctly, and the test deadlocks against its own server.
     EXPECT_EQ(::shutdown(pair.first.get(), SHUT_WR), 0);
 
     {
         Connection conn{std::move(pair.second)};
-        serve_connection(conn, router);
+        serve_connection(conn, pipeline);
     }
 
     std::string received;
@@ -212,7 +212,7 @@ TEST(ServeConnection, AnswersAMalformedHeadWithFourHundredAndCloses) {
     auto pair = connected_pair();
     send_all(pair.first, "NOTAREQUEST\r\n\r\n");
 
-    const std::string response = serve_and_read(pair, Router{});
+    const std::string response = serve_and_read(pair, Pipeline{});
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 400 Bad Request");
     EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
@@ -222,14 +222,14 @@ TEST(ServeConnection, AnswersAnUnknownMethodWithFiveOhOne) {
     auto pair = connected_pair();
     send_all(pair.first, "FROB / HTTP/1.1\r\nHost: example.test\r\n\r\n");
 
-    EXPECT_EQ(status_line(serve_and_read(pair, Router{})), "HTTP/1.1 501 Not Implemented");
+    EXPECT_EQ(status_line(serve_and_read(pair, Pipeline{})), "HTTP/1.1 501 Not Implemented");
 }
 
 TEST(ServeConnection, AnswersAnUnsupportedVersionWithFiveOhFive) {
     auto pair = connected_pair();
     send_all(pair.first, "GET / HTTP/2.0\r\nHost: example.test\r\n\r\n");
 
-    EXPECT_EQ(status_line(serve_and_read(pair, Router{})), "HTTP/1.1 505 HTTP Version Not Supported");
+    EXPECT_EQ(status_line(serve_and_read(pair, Pipeline{})), "HTTP/1.1 505 HTTP Version Not Supported");
 }
 
 // Over the 8192-byte line cap, which is a different failure from a malformed one and has to reach a different status.
@@ -238,7 +238,7 @@ TEST(ServeConnection, AnswersAnOverlongRequestLineWithFourFourteen) {
     const std::string target(9000, 'x');
     send_all(pair.first, "GET /" + target + " HTTP/1.1\r\nHost: example.test\r\n\r\n");
 
-    EXPECT_EQ(status_line(serve_and_read(pair, Router{})), "HTTP/1.1 414 URI Too Long");
+    EXPECT_EQ(status_line(serve_and_read(pair, Pipeline{})), "HTTP/1.1 414 URI Too Long");
 }
 
 // Past the 100-field cap. Three separate errors share this status, so the mapping has to fold them rather than name
@@ -252,7 +252,7 @@ TEST(ServeConnection, AnswersTooManyHeadersWithFourThirtyOne) {
     request += "\r\n";
     send_all(pair.first, request);
 
-    EXPECT_EQ(status_line(serve_and_read(pair, Router{})), "HTTP/1.1 431 Request Header Fields Too Large");
+    EXPECT_EQ(status_line(serve_and_read(pair, Pipeline{})), "HTTP/1.1 431 Request Header Fields Too Large");
 }
 
 // Keep-alive is the point of the loop: two heads in, two responses out, and no connection: close on either.
@@ -262,11 +262,11 @@ TEST(ServeConnection, AnswersTwoRequestsOnOneConnection) {
              "GET /one HTTP/1.1\r\nHost: a.test\r\n\r\n"
              "GET /two HTTP/1.1\r\nHost: b.test\r\n\r\n");
 
-    Router router;
-    router.add(Method::Get, "/one", echo());
-    router.add(Method::Get, "/two", echo());
+    Pipeline pipeline;
+    pipeline.add(Method::Get, "/one", echo());
+    pipeline.add(Method::Get, "/two", echo());
 
-    const std::string response = serve_and_read(pair, router);
+    const std::string response = serve_and_read(pair, pipeline);
 
     EXPECT_NE(response.find("/one"), std::string::npos);
     EXPECT_NE(response.find("/two"), std::string::npos);
@@ -292,10 +292,10 @@ TEST(ServeConnection, AnswersAKnownPathUnderAnotherMethodWithFourOhFive) {
     auto pair = connected_pair();
     send_all(pair.first, "GET /submit HTTP/1.1\r\nHost: example.test\r\n\r\n");
 
-    Router router;
-    router.add(Method::Post, "/submit", echo());
+    Pipeline pipeline;
+    pipeline.add(Method::Post, "/submit", echo());
 
-    const std::string response = serve_and_read(pair, router);
+    const std::string response = serve_and_read(pair, pipeline);
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 405 Method Not Allowed");
     // RFC 9110 makes this a MUST: a 405 that does not say what would have worked leaves the client guessing one verb at
@@ -309,12 +309,12 @@ TEST(ServeConnection, NamesEveryMethodThePathServesOnAFourOhFive) {
     auto pair = connected_pair();
     send_all(pair.first, "PUT /thing HTTP/1.1\r\nHost: example.test\r\n\r\n");
 
-    Router router;
-    router.add(Method::Get, "/thing", echo());
-    router.add(Method::Post, "/thing", echo());
-    router.add(Method::Delete, "/thing", echo());
+    Pipeline pipeline;
+    pipeline.add(Method::Get, "/thing", echo());
+    pipeline.add(Method::Post, "/thing", echo());
+    pipeline.add(Method::Delete, "/thing", echo());
 
-    const std::string response = serve_and_read(pair, router);
+    const std::string response = serve_and_read(pair, pipeline);
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 405 Method Not Allowed");
     EXPECT_NE(response.find("allow: GET, HEAD, POST, DELETE\r\n"), std::string::npos);
@@ -338,10 +338,10 @@ TEST(ServeConnection, SendsAllowOnAFourOhFiveToHeadWithoutABody) {
     auto pair = connected_pair();
     send_all(pair.first, "HEAD /submit HTTP/1.1\r\nHost: example.test\r\n\r\n");
 
-    Router router;
-    router.add(Method::Post, "/submit", echo());
+    Pipeline pipeline;
+    pipeline.add(Method::Post, "/submit", echo());
 
-    const std::string response = serve_and_read(pair, router);
+    const std::string response = serve_and_read(pair, pipeline);
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 405 Method Not Allowed");
     EXPECT_NE(response.find("allow: POST\r\n"), std::string::npos);
@@ -370,14 +370,14 @@ TEST(ServeConnection, SendsWhatTheHandlerReturned) {
     auto pair = connected_pair();
     send_all(pair.first, get_root);
 
-    Router router;
-    router.add(Method::Get, "/", [](const Request&) {
+    Pipeline pipeline;
+    pipeline.add(Method::Get, "/", [](const Request&) {
         auto response = text_response(201, "made\n");
         response.headers.add({"x-from-handler", "yes"});
         return response;
     });
 
-    const std::string response = serve_and_read(pair, router);
+    const std::string response = serve_and_read(pair, pipeline);
 
     // 201 is not in the phrase table, and a handler is still entitled to send it: the line keeps its space and drops
     // the phrase.
@@ -392,10 +392,10 @@ TEST(ServeConnection, HandsThePathParametersToTheHandler) {
     auto pair = connected_pair();
     send_all(pair.first, "GET /users/42 HTTP/1.1\r\nHost: example.test\r\n\r\n");
 
-    Router router;
-    router.add(Method::Get, "/users/<id>", echo_params());
+    Pipeline pipeline;
+    pipeline.add(Method::Get, "/users/<id>", echo_params());
 
-    const std::string response = serve_and_read(pair, router);
+    const std::string response = serve_and_read(pair, pipeline);
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 200 OK");
     EXPECT_EQ(body_of(response), "id=42\n");
@@ -407,13 +407,13 @@ TEST(ServeConnection, LeavesTheParametersEmptyForAStaticRoute) {
     auto pair = connected_pair();
     send_all(pair.first, get_root);
 
-    Router router;
-    router.add(Method::Get, "/", echo_params());
+    Pipeline pipeline;
+    pipeline.add(Method::Get, "/", echo_params());
 
-    EXPECT_EQ(body_of(serve_and_read(pair, router)), "no parameters\n");
+    EXPECT_EQ(body_of(serve_and_read(pair, pipeline)), "no parameters\n");
 }
 
-// Two mechanisms keep the second request clean: the reader resets its Request, and serve_connection assigns the
+// Two mechanisms keep the second request clean: the reader resets its Request, and the pipeline assigns the
 // router's captures unconditionally. Either alone would do, so this pins the behaviour rather than either mechanism.
 TEST(ServeConnection, DoesNotCarryParametersIntoTheNextRequest) {
     auto pair = connected_pair();
@@ -421,11 +421,11 @@ TEST(ServeConnection, DoesNotCarryParametersIntoTheNextRequest) {
              "GET /users/42 HTTP/1.1\r\nHost: a.test\r\n\r\n"
              "GET /health HTTP/1.1\r\nHost: b.test\r\n\r\n");
 
-    Router router;
-    router.add(Method::Get, "/users/<id>", echo_params());
-    router.add(Method::Get, "/health", echo_params());
+    Pipeline pipeline;
+    pipeline.add(Method::Get, "/users/<id>", echo_params());
+    pipeline.add(Method::Get, "/health", echo_params());
 
-    const std::string response = serve_and_read(pair, router);
+    const std::string response = serve_and_read(pair, pipeline);
 
     EXPECT_NE(response.find("id=42\n"), std::string::npos);
     EXPECT_NE(response.find("no parameters\n"), std::string::npos);
@@ -436,7 +436,7 @@ TEST(ServeConnection, DoesNotCarryParametersIntoTheNextRequest) {
 TEST(ServeConnection, WritesNothingWhenTheClientFinishesFirst) {
     auto pair = connected_pair();
 
-    EXPECT_TRUE(serve_and_read(pair, Router{}).empty());
+    EXPECT_TRUE(serve_and_read(pair, Pipeline{}).empty());
 }
 
 // A failed read is not a bad request: there is no head to reject, and nobody to tell either way. A receive deadline is
@@ -449,7 +449,7 @@ TEST(ServeConnection, WritesNothingWhenTheReadFails) {
     const auto started = std::chrono::steady_clock::now();
     {
         Connection conn{std::move(pair.second), brief_idle};
-        serve_connection(conn, Router{});
+        serve_connection(conn, Pipeline{});
     }
 
     // The idle limit is the short one here, so waiting the request limit out instead would take a hundred times longer.
@@ -556,9 +556,9 @@ TEST(ServeConnection, StopsWhenTheClientIsAlreadyGone) {
     send_all(pair.first, get_root);
     pair.first = Socket{-1};
 
-    const Router router = routing("/");
+    const Pipeline pipeline = routing("/");
     Connection conn{std::move(pair.second)};
-    serve_connection(conn, router);
+    serve_connection(conn, pipeline);
 
     SUCCEED();
 }
@@ -567,9 +567,9 @@ TEST(ServeConnection, HandsTheBodyToTheHandler) {
     auto pair = connected_pair();
     send_all(pair.first, "POST /submit HTTP/1.1\r\nHost: example.test\r\nContent-Length: 11\r\n\r\nhello world");
 
-    Router router;
-    router.add(Method::Post, "/submit", echo_body());
-    const std::string response = serve_and_read(pair, router);
+    Pipeline pipeline;
+    pipeline.add(Method::Post, "/submit", echo_body());
+    const std::string response = serve_and_read(pair, pipeline);
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 200 OK");
     EXPECT_EQ(body_of(response), "hello world");
@@ -583,10 +583,10 @@ TEST(ServeConnection, AnswersARequestPipelinedBehindABody) {
              "POST /submit HTTP/1.1\r\nHost: example.test\r\nContent-Length: 3\r\n\r\nabc"
              "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n");
 
-    Router router;
-    router.add(Method::Post, "/submit", echo_body());
-    router.add(Method::Get, "/", echo());
-    const std::string response = serve_and_read(pair, router);
+    Pipeline pipeline;
+    pipeline.add(Method::Post, "/submit", echo_body());
+    pipeline.add(Method::Get, "/", echo());
+    const std::string response = serve_and_read(pair, pipeline);
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 200 OK");
     EXPECT_NE(response.find("abc"), std::string::npos);
@@ -602,7 +602,7 @@ TEST(ServeConnection, AnswersAnOversizedBodyWithoutClosing) {
     auto pair = connected_pair();
     send_all(pair.first, "POST /submit HTTP/1.1\r\nHost: example.test\r\nContent-Length: 1048577\r\n\r\n");
 
-    const std::string response = serve_and_read(pair, Router{});
+    const std::string response = serve_and_read(pair, Pipeline{});
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 413 Content Too Large");
     EXPECT_EQ(response.find("connection: close\r\n"), std::string::npos);
@@ -647,7 +647,7 @@ TEST(ServeConnection, AnswersAnUndrainableBodyWithFourThirteenAndCloses) {
     auto pair = connected_pair();
     send_all(pair.first, "POST /submit HTTP/1.1\r\nHost: example.test\r\nContent-Length: 8388609\r\n\r\n");
 
-    const std::string response = serve_and_read(pair, Router{});
+    const std::string response = serve_and_read(pair, Pipeline{});
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 413 Content Too Large");
     EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
@@ -659,9 +659,9 @@ TEST(ServeConnection, AnswersAChunkedRequest) {
     send_all(pair.first, "POST /submit HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\n\r\n" +
                              chunk("hello") + chunk(" world") + std::string{last_chunk});
 
-    Router router;
-    router.add(Method::Post, "/submit", echo_body());
-    const std::string response = serve_and_read(pair, router);
+    Pipeline pipeline;
+    pipeline.add(Method::Post, "/submit", echo_body());
+    const std::string response = serve_and_read(pair, pipeline);
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 200 OK");
     EXPECT_EQ(body_of(response), "hello world");
@@ -674,10 +674,10 @@ TEST(ServeConnection, ServesARequestPipelinedBehindAChunkedBody) {
     send_all(pair.first, "POST /submit HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\n\r\n" +
                              chunk("abc") + std::string{last_chunk} + std::string{get_root});
 
-    Router router;
-    router.add(Method::Post, "/submit", echo_body());
-    router.add(Method::Get, "/", echo());
-    const std::string response = serve_and_read(pair, router);
+    Pipeline pipeline;
+    pipeline.add(Method::Post, "/submit", echo_body());
+    pipeline.add(Method::Get, "/", echo());
+    const std::string response = serve_and_read(pair, pipeline);
 
     EXPECT_EQ(response_count(response), 2U);
     EXPECT_NE(response.find("abc"), std::string::npos);
@@ -691,7 +691,7 @@ TEST(ServeConnection, AnswersAnUndecodableCodingWithFiveOhOne) {
     auto pair = connected_pair();
     send_all(pair.first, "POST /submit HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: gzip, chunked\r\n\r\n");
 
-    const std::string response = serve_and_read(pair, Router{});
+    const std::string response = serve_and_read(pair, Pipeline{});
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 501 Not Implemented");
     EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
@@ -705,7 +705,7 @@ TEST(ServeConnection, AnswersTheFramingPairWithFourHundred) {
              "POST /submit HTTP/1.1\r\nHost: example.test\r\n"
              "Transfer-Encoding: chunked\r\nContent-Length: 3\r\n\r\nabc");
 
-    const std::string response = serve_and_read(pair, Router{});
+    const std::string response = serve_and_read(pair, Pipeline{});
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 400 Bad Request");
     EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
@@ -811,7 +811,7 @@ TEST(ServeConnection, ClosesOnAnOversizedBodyFromAnHttpTenClient) {
     auto pair = connected_pair();
     send_all(pair.first, "POST /submit HTTP/1.0\r\nHost: example.test\r\nContent-Length: 1048577\r\n\r\n");
 
-    const std::string response = serve_and_read(pair, Router{});
+    const std::string response = serve_and_read(pair, Pipeline{});
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 413 Content Too Large");
     EXPECT_NE(response.find("connection: close\r\n"), std::string::npos);
@@ -826,11 +826,11 @@ Handler throwing(std::string what = "handler failed") {
 // rather than unwound out of the worker thread, where it would end the process.
 TEST(ServeConnection, AnswersAThrowingHandlerWithFiveHundred) {
     auto pair = connected_pair();
-    Router router;
-    router.add(Method::Get, "/", throwing());
+    Pipeline pipeline;
+    pipeline.add(Method::Get, "/", throwing());
     send_all(pair.first, get_root);
 
-    const std::string received = serve_and_read(pair, router);
+    const std::string received = serve_and_read(pair, pipeline);
 
     EXPECT_EQ(status_line(received), "HTTP/1.1 500 Internal Server Error");
 }
@@ -839,13 +839,13 @@ TEST(ServeConnection, AnswersAThrowingHandlerWithFiveHundred) {
 // same connection is answered normally.
 TEST(ServeConnection, KeepsTheConnectionOpenAfterAFiveHundred) {
     auto pair = connected_pair();
-    Router router;
-    router.add(Method::Get, "/boom", throwing());
-    router.add(Method::Get, "/", echo());
+    Pipeline pipeline;
+    pipeline.add(Method::Get, "/boom", throwing());
+    pipeline.add(Method::Get, "/", echo());
     send_all(pair.first, "GET /boom HTTP/1.1\r\nHost: first.test\r\n\r\n");
     send_all(pair.first, get_root);
 
-    const std::string received = serve_and_read(pair, router);
+    const std::string received = serve_and_read(pair, pipeline);
 
     EXPECT_EQ(response_count(received), 2U);
     EXPECT_EQ(status_line(received), "HTTP/1.1 500 Internal Server Error");
@@ -856,11 +856,11 @@ TEST(ServeConnection, KeepsTheConnectionOpenAfterAFiveHundred) {
 // the process just the same.
 TEST(ServeConnection, AnswersAThrowOfSomethingOtherThanAnExceptionWithFiveHundred) {
     auto pair = connected_pair();
-    Router router;
-    router.add(Method::Get, "/", [](const Request&) -> carafe::http::Response { throw 42; });
+    Pipeline pipeline;
+    pipeline.add(Method::Get, "/", [](const Request&) -> carafe::http::Response { throw 42; });
     send_all(pair.first, get_root);
 
-    const std::string received = serve_and_read(pair, router);
+    const std::string received = serve_and_read(pair, pipeline);
 
     EXPECT_EQ(status_line(received), "HTTP/1.1 500 Internal Server Error");
 }
@@ -869,11 +869,11 @@ TEST(ServeConnection, AnswersAThrowOfSomethingOtherThanAnExceptionWithFiveHundre
 // status and nothing else.
 TEST(ServeConnection, SendsNoExceptionTextInTheFiveHundred) {
     auto pair = connected_pair();
-    Router router;
-    router.add(Method::Get, "/", throwing("connection string: db://internal-host"));
+    Pipeline pipeline;
+    pipeline.add(Method::Get, "/", throwing("connection string: db://internal-host"));
     send_all(pair.first, get_root);
 
-    const std::string received = serve_and_read(pair, router);
+    const std::string received = serve_and_read(pair, pipeline);
 
     EXPECT_EQ(received.find("internal-host"), std::string::npos);
     EXPECT_EQ(body_of(received), "500 Internal Server Error\n");
@@ -883,11 +883,11 @@ TEST(ServeConnection, SendsNoExceptionTextInTheFiveHundred) {
 // The length still describes the body a GET would have carried.
 TEST(ServeConnection, AnswersAHeadWhoseGetThrowsWithFiveHundredAndNoBody) {
     auto pair = connected_pair();
-    Router router;
-    router.add(Method::Get, "/", throwing());
+    Pipeline pipeline;
+    pipeline.add(Method::Get, "/", throwing());
     send_all(pair.first, "HEAD / HTTP/1.1\r\nHost: example.test\r\n\r\n");
 
-    const std::string received = serve_and_read(pair, router);
+    const std::string received = serve_and_read(pair, pipeline);
 
     EXPECT_EQ(status_line(received), "HTTP/1.1 500 Internal Server Error");
     EXPECT_TRUE(body_of(received).empty());
@@ -898,13 +898,13 @@ TEST(ServeConnection, AnswersAHeadWhoseGetThrowsWithFiveHundredAndNoBody) {
 // request queued behind it goes unread.
 TEST(ServeConnection, ClosesAfterAFiveHundredWhenTheClientAskedTo) {
     auto pair = connected_pair();
-    Router router;
-    router.add(Method::Get, "/boom", throwing());
-    router.add(Method::Get, "/", echo());
+    Pipeline pipeline;
+    pipeline.add(Method::Get, "/boom", throwing());
+    pipeline.add(Method::Get, "/", echo());
     send_all(pair.first, "GET /boom HTTP/1.1\r\nHost: first.test\r\nConnection: close\r\n\r\n");
     send_all(pair.first, get_root);
 
-    const std::string received = serve_and_read(pair, router);
+    const std::string received = serve_and_read(pair, pipeline);
 
     EXPECT_EQ(response_count(received), 1U);
     EXPECT_EQ(status_line(received), "HTTP/1.1 500 Internal Server Error");

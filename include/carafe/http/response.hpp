@@ -22,6 +22,10 @@ struct Response {
 // zero characters there.
 [[nodiscard]] std::string_view status_message(int status) noexcept;
 
+// The status and its phrase as the whole body, followed by a newline, so a terminal reader learns more than the
+// number.
+[[nodiscard]] Response status_response(int status);
+
 // text/plain with the body attached.
 [[nodiscard]] Response text_response(int status, std::string body);
 

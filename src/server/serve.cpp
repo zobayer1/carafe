@@ -8,17 +8,15 @@
 #include "http/field_list.hpp"
 #include "http/request_reader.hpp"
 #include "server/connection.hpp"
+#include "server/pipeline.hpp"
 #include "server/pool.hpp"
-#include "server/router.hpp"
 
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
-#include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
-#include <vector>
 
 namespace carafe::server {
 
@@ -137,52 +135,9 @@ enum class AcceptRetry { Never, Immediately, AfterAPause };
     return !closing;
 }
 
-// The body names the status: a bare 404 tells a terminal reader nothing.
-[[nodiscard]] http::Response status_response(int status) {
-    std::string body = std::to_string(status);
-    body += ' ';
-    body += http::status_message(status);
-    body += '\n';
-    return http::text_response(status, std::move(body));
-}
-
-// Comma-separated, as RFC 9110 spells the field. Method names are case-sensitive tokens, so these stay uppercase though
-// every field name we emit is lowered.
-[[nodiscard]] std::string allow_value(const std::vector<http::Method>& methods) {
-    std::string value;
-    for (const http::Method method : methods) {
-        if (!value.empty()) {
-            value += ", ";
-        }
-        value += http::method_name(method);
-    }
-    return value;
-}
-
-// A path nobody registered is a 404; one registered under another method is a 405, and RFC 9110 makes Allow on that 405
-// a MUST rather than a courtesy.
-[[nodiscard]] http::Response unmatched_response(const Router& router, std::string_view target, bool path_matched) {
-    if (!path_matched) {
-        return status_response(404);
-    }
-    http::Response response = status_response(405);
-    response.headers.add({"allow", allow_value(router.allowed_methods(target))});
-    return response;
-}
-
-// A handler is the caller's code, so whatever it throws is this request's failure and no one else's. The request was
-// read to its end, so the stream is still in step and the connection stays usable.
-[[nodiscard]] http::Response run_handler(const http::Handler& handler, const http::Request& request) {
-    try {
-        return handler(request);
-    } catch (...) {
-        return status_response(500);
-    }
-}
-
 }  // namespace
 
-void serve_connection(Connection& conn, const Router& router) {
+void serve_connection(Connection& conn, const Pipeline& pipeline) {
     while (true) {
         auto result = conn.next_request();
 
@@ -192,12 +147,12 @@ void serve_connection(Connection& conn, const Router& router) {
                 // A deadline that fired with a request half-received is a client that asked and heard nothing back.
                 // Any other read failure, and an idle connection, has nobody to tell.
                 if (timed_out(result.os_error) && conn.request_in_progress()) {
-                    static_cast<void>(answer(conn, status_response(408), true, true));
+                    static_cast<void>(answer(conn, http::status_response(408), true, true));
                 }
                 return;
             }
 
-            http::Response response = status_response(status_for(result.error));
+            http::Response response = http::status_response(status_for(result.error));
 
             // Two reasons to close, and a failure carries no headers to consult: a 1.0 client that did ask to stay open
             // is closed on anyway. Legal, and the other way round leaves one that did not ask waiting forever.
@@ -214,13 +169,7 @@ void serve_connection(Connection& conn, const Router& router) {
         }
 
         http::Request& request = *result.request;
-        auto match = router.find(request.method, request.target);
-
-        // Unconditional: an unmatched request captured nothing, so this costs an empty vector rather than a branch.
-        request.params = std::move(match.params);
-
-        http::Response response = match ? run_handler(*match.handler, request)
-                                        : unmatched_response(router, request.target, match.path_matched);
+        http::Response response = pipeline.respond(request);
 
         if (!answer(conn, std::move(response), client_wants_close(request), request.method != http::Method::Head)) {
             return;
@@ -228,9 +177,9 @@ void serve_connection(Connection& conn, const Router& router) {
     }
 }
 
-void serve_forever(net::Listener& listener, const std::shared_ptr<const Router>& router, PoolLimits limits,
+void serve_forever(net::Listener& listener, const std::shared_ptr<const Pipeline>& pipeline, PoolLimits limits,
                    Deadlines deadlines) {
-    ConnectionPool pool{router, limits, deadlines};
+    ConnectionPool pool{pipeline, limits, deadlines};
 
     while (true) {
         auto accepted = listener.accept();

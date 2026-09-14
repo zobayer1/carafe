@@ -59,6 +59,7 @@ response a handler returns.
 - [App is the seam, and it is deliberately thin](04-connection-and-app.md#app-is-the-seam-and-it-is-deliberately-thin)
 - [Content-Length is not the caller's to get wrong](04-connection-and-app.md#content-length-is-not-the-callers-to-get-wrong)
 - [The seam has to hide its own router](04-connection-and-app.md#the-seam-has-to-hide-its-own-router)
+- [The connection loop stopped knowing that routes exist](04-connection-and-app.md#the-connection-loop-stopped-knowing-that-routes-exist)
 
 ## [05 Routing](05-routing.md)
 

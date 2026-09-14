@@ -23,6 +23,7 @@ set(CARAFE_HEADERS
     net/listener.hpp
     net/socket.hpp
     server/connection.hpp
+    server/pipeline.hpp
     server/pool.hpp
     server/router.hpp
     server/serve.hpp
@@ -40,6 +41,7 @@ set(CARAFE_SOURCES
     net/listener.cpp
     net/socket.cpp
     server/connection.cpp
+    server/pipeline.cpp
     server/pool.cpp
     server/router.cpp
     server/serve.cpp

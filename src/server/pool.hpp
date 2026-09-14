@@ -4,7 +4,7 @@
 
 #include "net/socket.hpp"
 #include "server/connection.hpp"
-#include "server/router.hpp"
+#include "server/pipeline.hpp"
 
 #include <chrono>
 #include <condition_variable>
@@ -23,7 +23,7 @@ namespace carafe::server {
 // away. A full pool therefore makes new clients wait for an existing one to end, which is what `queue_wait` bounds.
 class ConnectionPool {
 public:
-    explicit ConnectionPool(std::shared_ptr<const Router> router, PoolLimits limits = {}, Deadlines deadlines = {});
+    explicit ConnectionPool(std::shared_ptr<const Pipeline> pipeline, PoolLimits limits = {}, Deadlines deadlines = {});
 
     // Stops the workers and joins them. Queued connections are closed unserved, and ones being served are finished.
     ~ConnectionPool();
@@ -49,7 +49,7 @@ private:
     void work();
     void stop();
 
-    std::shared_ptr<const Router> router_;
+    std::shared_ptr<const Pipeline> pipeline_;
     PoolLimits limits_;
     Deadlines deadlines_;
 

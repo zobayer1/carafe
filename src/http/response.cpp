@@ -43,6 +43,14 @@ Response text_response(int status, std::string body) {
     return response;
 }
 
+Response status_response(int status) {
+    std::string body = std::to_string(status);
+    body += ' ';
+    body += status_message(status);
+    body += '\n';
+    return text_response(status, std::move(body));
+}
+
 std::string Response::serialize(bool with_body) const {
     std::string out = "HTTP/1.1 ";
     out += std::to_string(status) + " ";

@@ -4,7 +4,7 @@
 
 #include "net/socket.hpp"
 #include "server/connection.hpp"
-#include "server/router.hpp"
+#include "server/pipeline.hpp"
 #include "server/serve.hpp"
 
 #include <chrono>
@@ -18,8 +18,8 @@
 
 namespace carafe::server {
 
-ConnectionPool::ConnectionPool(std::shared_ptr<const Router> router, PoolLimits limits, Deadlines deadlines)
-    : router_(std::move(router)), limits_(limits), deadlines_(deadlines) {
+ConnectionPool::ConnectionPool(std::shared_ptr<const Pipeline> pipeline, PoolLimits limits, Deadlines deadlines)
+    : pipeline_(std::move(pipeline)), limits_(limits), deadlines_(deadlines) {
     for (std::size_t i = 0; i < limits_.workers; i++) {
         try {
             workers_.emplace_back(&ConnectionPool::work, this);
@@ -63,7 +63,7 @@ void ConnectionPool::work() {
         }
 
         Connection conn{std::move(job->client), deadlines_};
-        serve_connection(conn, *router_);
+        serve_connection(conn, *pipeline_);
     }
 }
 
