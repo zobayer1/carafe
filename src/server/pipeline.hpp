@@ -1,29 +1,37 @@
 #pragma once
 
 #include <carafe/http/handler.hpp>
+#include <carafe/http/middleware.hpp>
 #include <carafe/http/request.hpp>
 #include <carafe/http/response.hpp>
 
 #include "server/router.hpp"
 
 #include <string_view>
+#include <vector>
 
 namespace carafe::server {
 
-// What the application does with a parsed request: route it, then run the handler or say why none ran. Every worker
-// calls respond() on one shared instance at once, so nothing may change it once serving has started.
+// What the application does with a parsed request: route it, then pass it through the middleware to the handler, or to
+// the 404 or 405 when no route claims it. Every worker calls respond() on one shared instance at once, so nothing may
+// change it once serving has started.
 class Pipeline {
 public:
-    // Forwarded to the Router, with its rules: the first registration wins, and registration comes before serving.
+    // Forwarded to the Router, whose rule stands: the first registration for a path wins.
     void add(http::Method method, std::string_view path, http::Handler handler);
 
-    // What the application answers a parsed request with: the route's handler, a 404 or 405 when no route claims it,
-    // or a 500 when the handler throws. It binds the route's captures into `request.params` on the way, which is why
-    // the request is not const. Whether to close, and whether HEAD drops the body, stay with the caller.
+    // The first registered runs outermost, and each wraps every request respond is given, matched or not.
+    void use(http::Middleware middleware);
+
+    // Whatever the middleware and the route's handler make of the request, a 404 or 405 when no route claims it, or a
+    // 500 when a handler or a middleware throws. The captures are bound into `request.params` before the middleware
+    // runs, which is why the request is not const. Whether to close, and whether HEAD drops the body, stay with the
+    // caller.
     [[nodiscard]] http::Response respond(http::Request& request) const;
 
 private:
     Router router_;
+    std::vector<http::Middleware> middlewares_;
 };
 
 }  // namespace carafe::server

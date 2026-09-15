@@ -37,9 +37,9 @@ const carafe::RunError stopped = app.run(8080);
 | GET    | `/files/<path:rest>` | the sub-path it was given, read from nowhere |
 | POST   | `/echo`          | the request body, unchanged                   |
 | POST   | `/size`          | the body's length in bytes                    |
-| PUT    | `/store/<key>`   | the captured key and the body together        |
-| PATCH  | `/store/<key>`   | the same, to show a second body verb frames alike |
-| DELETE | `/store/<key>`   | the captured key alone                        |
+| PUT    | `/store/<key>`   | the captured key and the body together, given the token |
+| PATCH  | `/store/<key>`   | the same, to show a second body verb frames alike, given the token |
+| DELETE | `/store/<key>`   | the captured key alone, given the token |
 | OPTIONS| `/store/<key>`   | an `allow:` list, registered through `route()` |
 
 `get`, `post`, `put`, `patch` and `del` are named helpers; `del` is spelt short
@@ -74,9 +74,9 @@ allow: PUT, PATCH, DELETE, OPTIONS
 ```sh
 curl -i http://localhost:8080/hello/world
 curl -i --data 'hi there' http://localhost:8080/echo
-curl -i -X PUT --data 'v' http://localhost:8080/store/k
-curl -i -X PATCH --data 'more' http://localhost:8080/store/k
-curl -i -X DELETE http://localhost:8080/store/k
+curl -i -X PUT -H 'Authorization: Bearer letmein' --data 'v' http://localhost:8080/store/k
+curl -i -X PATCH -H 'Authorization: Bearer letmein' --data 'more' http://localhost:8080/store/k
+curl -i -X DELETE -H 'Authorization: Bearer letmein' http://localhost:8080/store/k
 curl -i -X OPTIONS http://localhost:8080/store/k
 curl -i -X POST http://localhost:8080/hello          # 405, with allow:
 curl -i http://localhost:8080/missing                # 404
@@ -207,6 +207,90 @@ and the bytes it stands for do not, so those stay apart.
 
 A trailing slash is part of the path, so `/store/k/` is not `/store/k` and comes
 back `404`. Nothing here redirects one to the other.
+
+## Middleware
+
+Two middleware sit in front of every route. The first writes an access log
+line for each request once it has been answered. The second refuses a write to
+the store that does not carry the token, and never lets it reach a handler:
+
+```cpp
+app.use([](const Request& request, const carafe::http::Next& next) {
+    const bool writes =
+        request.method == Method::Put || request.method == Method::Patch || request.method == Method::Delete;
+    if (writes && request.headers.get("authorization") != "Bearer letmein") {
+        carafe::http::Response refused = carafe::http::status_response(401);
+        refused.headers.add({"www-authenticate", R"(Bearer realm="carafe")"});
+        return refused;
+    }
+    return next(request);
+});
+```
+
+Returning without calling `next` is the whole refusal. RFC 9110 §15.5.2 makes
+`www-authenticate` a MUST on a `401`, which is why it is there:
+
+```console
+$ curl -si -X PUT --data 'v' http://localhost:8080/store/k
+HTTP/1.1 401 Unauthorized
+content-type: text/plain; charset=utf-8
+www-authenticate: Bearer realm="carafe"
+content-length: 17
+
+401 Unauthorized
+```
+
+| Request                                   | Status |
+| ----------------------------------------- | ------ |
+| `PUT /store/k` with the token             | 200    |
+| `PUT /store/k` without it                 | 401    |
+| `PATCH /store/k` without it               | 401    |
+| `DELETE /store/k` with the wrong token    | 401    |
+| `DELETE /store/k` with the token          | 200    |
+| `GET /hello/world`                        | 200    |
+| `POST /echo`                              | 200    |
+| `OPTIONS /store/k`                        | 200    |
+| `GET /missing`                            | 404    |
+| `HEAD /hello`                             | 200    |
+
+The check is on the method, not the path, and that is deliberate. A middleware
+sees the target as the client sent it, while the router matches the normalised
+path, so a check for an `/admin` prefix is walked around by
+`/x/../admin/secret`. Guarding the three store writes leaves `GET`, `POST` and
+`OPTIONS` open, as the table shows.
+
+The same requests, as the server logged them with its stdout going to a file:
+
+```console
+$ ./build/debug/bin/hello > access.log
+PUT /store/k 200 6B 2us
+PUT /store/k 401 17B 2us
+PATCH /store/k 401 17B 2us
+DELETE /store/k 401 17B 4us
+DELETE /store/k 200 10B 6us
+GET /hello/world 200 14B 2us
+POST /echo 200 2B 4us
+OPTIONS /store/k 200 0B 2us
+GET /missing 404 14B 1us
+HEAD /hello 200 21B 3us
+```
+
+The log is registered first, so it runs outermost and records what the auth
+middleware refused: the `401`s are there with their 17-byte bodies. So is the
+`404`, because middleware wraps every request that parsed, not only the ones a
+route claimed.
+
+`HEAD /hello` is logged at 21 bytes although none are sent. The log sees the
+`GET` handler's whole response, and the body is only dropped later, when the
+connection writes it, which is how a `HEAD` still reports the length of the
+`GET` body. The time covers the inner middleware and the handler, not routing
+and not the network.
+
+Each line is flushed as it is written. To a terminal that changes nothing,
+since stdout is line buffered there. To a file or a pipe it is block buffered:
+a reduced copy of this log without the flush got none of five lines into the
+file while the server ran, and none were there after it stopped. With the
+flush, every line above was in the file before the server was stopped.
 
 ## How long the connection lives
 

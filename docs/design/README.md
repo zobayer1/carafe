@@ -113,3 +113,10 @@ while being sent to.
 - [A connection that says nothing still costs something](09-deadlines.md#a-connection-that-says-nothing-still-costs-something)
 - [A deadline that every byte renews is not a deadline](09-deadlines.md#a-deadline-that-every-byte-renews-is-not-a-deadline)
 - [A short write is what the deadline was waiting for](09-deadlines.md#a-short-write-is-what-the-deadline-was-waiting-for)
+
+## [10 Middleware](10-middleware.md)
+
+Acting on every request: the wrapping shape, where it runs, and what it can
+and cannot see.
+
+- [One shape for before, after and instead](10-middleware.md#one-shape-for-before-after-and-instead)
