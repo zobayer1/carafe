@@ -6,6 +6,7 @@
 
 #include <carafe/app.hpp>
 #include <carafe/config.hpp>
+#include <carafe/http/middleware.hpp>
 #include <carafe/http/request.hpp>
 #include <carafe/http/response.hpp>
 #include <carafe/version.hpp>
@@ -127,6 +128,37 @@ int main() {
         return 1;
     }
 
+    // After the fact: runs everything else, then writes one line about what came back. The line is built whole and
+    // written in one insertion, because every worker logs at once, and flushed, because a stdout that is a file or a
+    // pipe holds lines back and drops them if the process is stopped. The time covers the handler and inner middleware,
+    // not routing or the network.
+    app.use([](const Request& request, const carafe::http::Next& next) {
+        const auto started = std::chrono::steady_clock::now();
+        carafe::http::Response response = next(request);
+        const auto micros =
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count();
+
+        std::string line{carafe::http::method_name(request.method)};
+        line += ' ' + request.target + ' ' + std::to_string(response.status) + ' ' +
+                std::to_string(response.body.size()) + "B " + std::to_string(micros) + "us\n";
+        std::cout << line << std::flush;
+        return response;
+    });
+
+    // Before the fact: a write to the store without the token never reaches a handler. It checks the method, not the
+    // path, because a middleware sees the raw target and a prefix check there can be walked around.
+    app.use([](const Request& request, const carafe::http::Next& next) {
+        const bool writes =
+            request.method == Method::Put || request.method == Method::Patch || request.method == Method::Delete;
+        if (writes && request.headers.get("authorization") != "Bearer letmein") {
+            // RFC 9110 §15.5.2: a 401 MUST say how to authenticate.
+            carafe::http::Response refused = carafe::http::status_response(401);
+            refused.headers.add({"www-authenticate", R"(Bearer realm="carafe")"});
+            return refused;
+        }
+        return next(request);
+    });
+
     // Flushed, because run() blocks immediately afterwards and a piped stdout would otherwise hold this until the
     // process ends.
     std::cout << "carafe " << carafe::version() << " serving on http://localhost:" << port
@@ -135,7 +167,8 @@ int main() {
               << "\n      curl -i http://localhost:" << port << "/users/42"
               << "\n      curl -i http://localhost:" << port << "/files/css/site.css"
               << "\n      curl -i --data 'hi' http://localhost:" << port << "/echo"
-              << "\n      curl -i -X PUT --data 'v' http://localhost:" << port << "/store/k"
+              << "\n      curl -i -X PUT -H 'Authorization: Bearer letmein' --data 'v' http://localhost:" << port
+              << "/store/k"
               << "\n      see examples/README.md for the rest\n"
               << std::flush;
 

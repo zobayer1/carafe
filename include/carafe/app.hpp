@@ -2,13 +2,13 @@
 
 #include <carafe/config.hpp>
 #include <carafe/http/handler.hpp>
+#include <carafe/http/middleware.hpp>
 #include <carafe/http/request.hpp>
 
 #include <cstdint>
 #include <memory>
 #include <string_view>
 
-// Forward declaration for Pipeline defined in src/server/pipeline.hpp file.
 namespace carafe::server {
 class Pipeline;
 }
@@ -49,6 +49,10 @@ public:
 
     // `delete` is a keyword.
     void del(std::string_view path, http::Handler handler);
+
+    // The first registered runs outermost, whatever order routes and middleware were registered in. Register before
+    // calling run, not during.
+    void use(http::Middleware middleware);
 
     // The methods with no named helper. False for Head and Connect: HEAD is answered by the Get fallback, whose headers
     // a hand-written route would have to reproduce, and a CONNECT target is an authority rather than a path.

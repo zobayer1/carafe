@@ -12,6 +12,8 @@ std::string_view status_message(int status) noexcept {
             return "OK";
         case 400:
             return "Bad Request";
+        case 401:
+            return "Unauthorized";
         case 404:
             return "Not Found";
         case 405:

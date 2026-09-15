@@ -12,6 +12,7 @@ set(CARAFE_HEADERS
     "${PROJECT_SOURCE_DIR}/include/carafe/config.hpp"
     "${PROJECT_SOURCE_DIR}/include/carafe/http/handler.hpp"
     "${PROJECT_SOURCE_DIR}/include/carafe/http/headers.hpp"
+    "${PROJECT_SOURCE_DIR}/include/carafe/http/middleware.hpp"
     "${PROJECT_SOURCE_DIR}/include/carafe/http/request.hpp"
     "${PROJECT_SOURCE_DIR}/include/carafe/http/response.hpp"
     http/ascii.hpp

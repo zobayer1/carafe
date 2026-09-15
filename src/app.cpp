@@ -1,5 +1,6 @@
 #include <carafe/app.hpp>
 #include <carafe/config.hpp>
+#include <carafe/http/middleware.hpp>
 
 #include "net/listener.hpp"
 #include "server/pipeline.hpp"
@@ -47,6 +48,25 @@ void App::del(std::string_view path, http::Handler handler) {
     pipeline_->add(http::Method::Delete, path, std::move(handler));
 }
 
+std::string_view describe(RunError error) noexcept {
+    // No default: a new failure has to be given words, not fall through to someone else's.
+    switch (error) {
+        case RunError::InvalidLimits:
+            return "the pool limits would serve nobody";
+        case RunError::InvalidDeadlines:
+            return "a deadline of zero is no deadline at all";
+        case RunError::BindFailed:
+            return "the port could not be bound";
+        case RunError::AcceptFailed:
+            return "accepting connections stopped";
+    }
+    return "unknown failure";
+}
+
+void App::use(http::Middleware middleware) {
+    pipeline_->use(std::move(middleware));
+}
+
 bool App::route(http::Method method, std::string_view path, http::Handler handler) {
     // No default: a new method has to be classified, not fall through to registrable.
     switch (method) {
@@ -65,21 +85,6 @@ bool App::route(http::Method method, std::string_view path, http::Handler handle
 
     pipeline_->add(method, path, std::move(handler));
     return true;
-}
-
-std::string_view describe(RunError error) noexcept {
-    // No default: a new failure has to be given words, not fall through to someone else's.
-    switch (error) {
-        case RunError::InvalidLimits:
-            return "the pool limits would serve nobody";
-        case RunError::InvalidDeadlines:
-            return "a deadline of zero is no deadline at all";
-        case RunError::BindFailed:
-            return "the port could not be bound";
-        case RunError::AcceptFailed:
-            return "accepting connections stopped";
-    }
-    return "unknown failure";
 }
 
 RunError App::run(std::uint16_t port, PoolLimits limits, Deadlines deadlines) {

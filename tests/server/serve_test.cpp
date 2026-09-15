@@ -2,6 +2,7 @@
 
 #include <carafe/config.hpp>
 #include <carafe/http/handler.hpp>
+#include <carafe/http/middleware.hpp>
 #include <carafe/http/request.hpp>
 #include <carafe/http/response.hpp>
 
@@ -909,6 +910,24 @@ TEST(ServeConnection, ClosesAfterAFiveHundredWhenTheClientAskedTo) {
     EXPECT_EQ(response_count(received), 1U);
     EXPECT_EQ(status_line(received), "HTTP/1.1 500 Internal Server Error");
     EXPECT_NE(received.find("\r\nconnection: close\r\n"), std::string::npos);
+}
+
+// Middleware reaches the wire, and it runs for a request no route claimed: the field it adds is in the bytes of a 404.
+TEST(ServeConnection, SendsWhatMiddlewareAddedEvenOnAFourOhFour) {
+    auto pair = connected_pair();
+    Pipeline pipeline;
+    pipeline.add(Method::Get, "/", echo());
+    pipeline.use([](const Request& request, const carafe::http::Next& next) {
+        carafe::http::Response response = next(request);
+        response.headers.add({"x-middleware", "ran"});
+        return response;
+    });
+    send_all(pair.first, "GET /missing HTTP/1.1\r\nHost: example.test\r\n\r\n");
+
+    const std::string received = serve_and_read(pair, pipeline);
+
+    EXPECT_EQ(status_line(received), "HTTP/1.1 404 Not Found");
+    EXPECT_NE(received.find("\r\nx-middleware: ran\r\n"), std::string::npos);
 }
 
 }  // namespace

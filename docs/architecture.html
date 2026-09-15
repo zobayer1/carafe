@@ -289,6 +289,10 @@
       <text class="chip-t" x="504" y="80" text-anchor="middle">Handler</text>
       <rect class="chip" x="550" y="64" width="71" height="24" rx="4"/>
       <text class="chip-t" x="586" y="80" text-anchor="middle">Headers</text>
+          <rect class="chip" x="631" y="64" width="92" height="24" rx="4"/>
+          <text class="chip-t" x="677" y="80" text-anchor="middle">Middleware</text>
+          <rect class="chip" x="733" y="64" width="50" height="24" rx="4"/>
+          <text class="chip-t" x="758" y="80" text-anchor="middle">Next</text>
       <line class="flow" x1="170" y1="102" x2="170" y2="138" marker-end="url(#tip)"/>
       <rect class="band" x="40" y="122" width="820" height="80" rx="6"/>
       <line class="band-edge" x1="41.5" y1="132" x2="41.5" y2="192" stroke="var(--layer-server)"/>
@@ -349,7 +353,7 @@
     whole run. Everything below a worker belongs to a single client and dies with it.</p>
     <figure>
       <div class="frame">
-        <svg viewBox="0 0 900 420" role="img" aria-label="Ownership graph: App owns a Pipeline, which owns the Router, and calls serve_forever, which accepts on a Listener and submits to a ConnectionPool; the pool holds workers and a queue and builds a Connection, which owns a Socket and a RequestReader and asks the Pipeline to respond.">
+        <svg viewBox="0 0 900 420" role="img" aria-label="Ownership graph: App owns a Pipeline, which owns the Router and the middleware, and calls serve_forever, which accepts on a Listener and submits to a ConnectionPool; the pool holds workers and a queue and builds a Connection, which owns a Socket and a RequestReader and asks the Pipeline to respond.">
           <defs>
             <marker id="tip2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path class="marker" d="M 0 0 L 10 5 L 0 10 z"/>
@@ -360,7 +364,8 @@
           <text class="box-t" x="130" y="69" text-anchor="middle">App</text>
 
           <rect class="box" x="320" y="40" width="180" height="46" rx="5"/>
-          <text class="box-t" x="410" y="69" text-anchor="middle">Pipeline</text>
+          <text class="box-t" x="410" y="62" text-anchor="middle">Pipeline</text>
+          <text class="chip-t" x="410" y="78" text-anchor="middle">+ middleware, in order</text>
 
           <rect class="box" x="600" y="40" width="180" height="46" rx="5"/>
           <text class="box-t" x="690" y="69" text-anchor="middle">Router</text>
@@ -416,7 +421,7 @@
       <figcaption><b>The worker is the unit, not the request.</b> A worker takes one queued socket,
       builds a <code>Connection</code> around it, and stays with that client until it goes away. So
       a keep-alive client holds a worker, and the queue is what absorbs the arrivals that land while
-      every worker is held. The pipeline is the one thing crossing from a worker back up: it is shared, const from the moment serving starts, and therefore needs no lock. It owns the router, and the router holds each route's handler.</figcaption>
+      every worker is held. The pipeline is the one thing crossing from a worker back up: it is shared, const from the moment serving starts, and therefore needs no lock. It owns the router and the middleware, and the router holds each route's handler.</figcaption>
     </figure>
   </section>
 
@@ -429,7 +434,7 @@
     reaches it.</p>
     <figure>
       <div class="frame">
-        <svg viewBox="0 0 1040 730" role="img" aria-label="Sequence diagram: a client connects, the listener accepts, serve_forever submits the socket to the pool, a worker builds a Connection, the reader assembles a request, the pipeline routes it and calls the handler, and the response is written back inside a keep-alive loop.">
+        <svg viewBox="0 0 1040 730" role="img" aria-label="Sequence diagram: a client connects, the listener accepts, serve_forever submits the socket to the pool, a worker builds a Connection, the reader assembles a request, the pipeline runs the middleware and calls the handler, and the response is written back inside a keep-alive loop.">
           <defs>
             <marker id="tip3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path class="marker" d="M 0 0 L 10 5 L 0 10 z"/>
@@ -493,6 +498,7 @@
 
           <line class="flow" x1="738" y1="440" x2="874" y2="440" marker-end="url(#tip3)"/>
           <text class="arrow-t" x="806" y="432" text-anchor="middle">respond(request)</text>
+          <text class="note-t" x="806" y="458" text-anchor="middle">through the middleware</text>
 
           <line class="flow" x1="880" y1="482" x2="979" y2="482" marker-end="url(#tip3)"/>
           <text class="arrow-t" x="930" y="474" text-anchor="middle">routes, calls</text>
@@ -516,7 +522,7 @@
       claims the socket and ends when the client goes away, a deadline fires, or the response says
       <code>connection: close</code>. Everything inside the loop repeats on the same socket and the
       same parser, and <code>next_request()</code> is where a line, then a head, then a body are
-      assembled out of however many reads it takes. <code>respond</code> is the whole application: the route, the handler, or the 404, 405 or 500 the pipeline builds when no handler answers. The dashed arrows are returns rather than calls.</figcaption>
+      assembled out of however many reads it takes. <code>respond</code> is the whole application: the middleware, then the route's handler, or the 404, 405 or 500 the pipeline builds when no handler answers. The dashed arrows are returns rather than calls.</figcaption>
     </figure>
   </section>
 

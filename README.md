@@ -152,7 +152,7 @@ make PRESET=release test
 - [x] Concurrency: a deadline on a whole request, and on writing a response
 - [x] Concurrency: a thread pool, to bound how many connections may be held at once
 - [x] Configuration: pool size and deadlines chosen by the caller, and refused when they would serve nobody
-- [ ] Middleware
+- [x] Middleware
 - [x] Keep-alive: the `Connection` field and the version's own default
 - [x] Chunked transfer encoding: chunk framing, extensions, and a dropped trailer section
 - [ ] Static file serving
