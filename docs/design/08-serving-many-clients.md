@@ -213,3 +213,45 @@ and serialisation are library code, and an allocation failure in any of them
 still ends the process. A last-resort catch in the pool worker would reduce
 that to one lost connection, but nothing can make those failures happen on
 demand, so it would ship untested, and it is left out on those grounds.
+
+## Refusing costs a send that cannot wait
+
+Rejection was a close, and the note above says why: the send happens on the
+accept thread, and a thread that waits for one client is not accepting for any
+of them. The missing piece was a write that reports instead of waiting.
+
+`Socket::write_now` is that write. It sends once with `MSG_DONTWAIT` and
+returns `EAGAIN` where the socket has no room, rather than blocking. The flag
+belongs to the call, not to the descriptor, which is why it needs no `fcntl`
+and leaves nothing behind for the next writer. It also beats anything an
+earlier write left on the socket: measured against a filled socket carrying a
+five second send timeout, the flagged call returned `EAGAIN` in a tenth of a
+millisecond, and the same call without it waited 5.4 seconds for the same
+answer. A send that placed only some of the bytes is reported as `EAGAIN` too,
+since the caller is closing either way and a count would tell it nothing it
+could act on.
+
+The refusal is serialized once, when the pool is built. It never varies, and
+building a response, adding two fields and serializing it would be work done
+on the accept thread at the exact moment a flood is arriving. Refusing is now
+one send of bytes the pool already holds.
+
+Both rejections answer the same way. A full queue is refused on the accept
+thread, and a connection that waited past `queue_wait` is refused by the
+worker that reaches it. The worker could afford a bounded blocking write, and
+does not take it: that client is past its own deadline and most likely gone,
+so waiting on it would spend the worker on nobody, which is what dropping it
+was for.
+
+What a client actually sees was worth measuring rather than assuming. The pool
+never reads the request, so it closes a socket with unread bytes in it, which
+sends a reset. The refusal still arrives: it was already in the client's
+buffer before the close, and both a TCP connection and a socketpair delivered
+it in full. The difference shows up on the read after: a client that had sent
+a request gets a reset there, one that sent nothing gets a clean end of
+stream.
+
+No `Retry-After`. RFC 9110 §15.6.4 allows it, and the pool has no idea when a
+worker frees up: `queue_wait` bounds how long a queued connection may wait,
+not how long this refused one should stay away. A number made up to fill the
+field would be worse than the field's absence.

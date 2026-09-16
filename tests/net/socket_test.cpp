@@ -592,4 +592,53 @@ TEST(MillisecondsUntil, ReportsWhatIsLeftOfTheDeadline) {
     EXPECT_LE(*left, std::chrono::milliseconds(500));
 }
 
+// One send and no waiting. What the socket takes now goes now, and the peer reads it.
+TEST(SocketWriteNow, SendsWhatTheSocketTakes) {
+    auto [reader, writer] = connected_pair();
+
+    EXPECT_TRUE(writer.write_now("refused\n"));
+
+    std::array<char, 64> buffer{};
+    const ReadResult got = reader.read(buffer.data(), buffer.size());
+    ASSERT_TRUE(got);
+    ASSERT_TRUE(got.bytes.has_value());
+    EXPECT_EQ(*got.bytes, "refused\n");
+}
+
+// A socket with no room reports rather than waits. This is the whole reason the call exists: the accept thread refuses
+// connections with it, and a wait there is a wait for every client.
+TEST(SocketWriteNow, ReportsRatherThanWaitingWhenTheSocketIsFull) {
+    auto [client, server] = loopback_pair();
+    ASSERT_TRUE(client.valid());
+    ASSERT_TRUE(server.valid());
+    EXPECT_GT(fill_send_buffer(server), 0U);
+
+    const auto started = std::chrono::steady_clock::now();
+    const WriteResult result = server.write_now(pattern(std::size_t{64} * 1024));
+    const auto took = std::chrono::steady_clock::now() - started;
+
+    EXPECT_FALSE(result);
+    EXPECT_TRUE(result.os_error == EAGAIN || result.os_error == EWOULDBLOCK) << result.os_error;
+    EXPECT_LT(took, std::chrono::milliseconds(250)) << "write_now waited for room";
+}
+
+// A send deadline left on the socket by write() decides nothing here: MSG_DONTWAIT is per call, so the order the two
+// writes were used in cannot make a refusal wait.
+TEST(SocketWriteNow, IgnoresASendDeadlineLeftOnTheSocket) {
+    auto [client, server] = loopback_pair();
+    ASSERT_TRUE(client.valid());
+    ASSERT_TRUE(server.valid());
+    EXPECT_GT(fill_send_buffer(server), 0U);
+
+    const timeval five{5, 0};
+    ASSERT_EQ(::setsockopt(server.get(), SOL_SOCKET, SO_SNDTIMEO, &five, sizeof(five)), 0);
+
+    const auto started = std::chrono::steady_clock::now();
+    const WriteResult result = server.write_now(pattern(std::size_t{64} * 1024));
+    const auto took = std::chrono::steady_clock::now() - started;
+
+    EXPECT_FALSE(result);
+    EXPECT_LT(took, std::chrono::milliseconds(250)) << "write_now honoured the deadline instead of refusing at once";
+}
+
 }  // namespace

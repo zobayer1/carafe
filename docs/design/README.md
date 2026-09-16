@@ -104,6 +104,7 @@ Threads, the accept loop that must outlive its failures, and the bounded pool.
 - [A bounded pool is the outage again with a number on it](08-serving-many-clients.md#a-bounded-pool-is-the-outage-again-with-a-number-on-it)
 - [A number the caller cannot reach is the library's number, not theirs](08-serving-many-clients.md#a-number-the-caller-cannot-reach-is-the-librarys-number-not-theirs)
 - [One handler that throws was every client](08-serving-many-clients.md#one-handler-that-throws-was-every-client)
+- [Refusing costs a send that cannot wait](08-serving-many-clients.md#refusing-costs-a-send-that-cannot-wait)
 
 ## [09 Deadlines](09-deadlines.md)
 

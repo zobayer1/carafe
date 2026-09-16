@@ -12,6 +12,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -35,8 +36,9 @@ public:
     ConnectionPool(ConnectionPool&&) = delete;
     ConnectionPool& operator=(ConnectionPool&&) = delete;
 
-    // Takes one accepted connection, and closes it when the queue is full: an accept loop that waited for room would
-    // become the queue itself.
+    // Takes one accepted connection. A queue with no room for it is answered with a 503 where the socket takes one
+    // without waiting, and closed either way: an accept loop that waited, for room or for a write, would become the
+    // queue itself.
     void submit(net::Socket client);
 
 private:
@@ -52,6 +54,8 @@ private:
     std::shared_ptr<const Pipeline> pipeline_;
     PoolLimits limits_;
     Deadlines deadlines_;
+
+    std::string refusal_;
 
     std::mutex mutex_;
     std::condition_variable ready_;

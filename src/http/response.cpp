@@ -30,6 +30,8 @@ std::string_view status_message(int status) noexcept {
             return "Internal Server Error";
         case 501:
             return "Not Implemented";
+        case 503:
+            return "Service Unavailable";
         case 505:
             return "HTTP Version Not Supported";
         default:

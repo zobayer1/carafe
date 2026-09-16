@@ -555,12 +555,12 @@ $ ls /proc/$!/task | wc -l
 ```
 
 Seventeen is the main thread and the sixteen workers the example asks for. One
-worker serves a whole
-connection rather than one request, so a client holding a keep-alive connection
-holds a worker with it. Past sixty four, connections wait in the queue; past the
-queue, they are closed as they arrive rather than held. A connection that waited
-in the queue longer than the queue deadline is dropped when a worker finally
-reaches it, on the grounds that the client has very likely gone.
+worker serves a whole connection rather than one request, so a client holding
+a keep-alive connection holds a worker with it. Past sixteen, connections wait
+in the queue; past the queue, they are refused with a 503 as they arrive. A
+connection that waited in the queue longer than the queue deadline is refused
+the same way when a worker finally reaches it, on the grounds that the client
+has very likely gone.
 
 Both bounds are arguments to `run`, and the numbers above are the ones the
 example passes. See *Choosing the bounds* below.
@@ -621,23 +621,38 @@ worker is only ever handed work through the queue. And a zero deadline reaches
 `setsockopt` as *no* deadline at all, which is the opposite of how it reads. Ask
 for no limit with a large value instead.
 
-With sixteen and sixty four, the far end of the queue is one command away.
-Sixteen connections take the workers, sixty four more fill the queue, and the
-next one is closed as it arrives:
+With sixteen and sixty four, both refusals are one command away. Sixteen
+connections take the workers, sixty four more fill the queue, and the next one
+is refused as it arrives. A connection already in the queue is refused too,
+once its wait is over:
 
 ```console
 $ python3 -c "
-import socket
+import socket, time
 held = [socket.create_connection(('localhost', 8080)) for _ in range(80)]
 for s in held:
     s.sendall(b'GET /hel')
 extra = socket.create_connection(('localhost', 8080)); extra.settimeout(5)
-print(repr(extra.recv(200)))"
-b''
+print('queue full:', extra.recv(200).split(b'\r\n')[0].decode())
+queued = held[40]; queued.settimeout(20); started = time.monotonic()
+print('wait over: ', queued.recv(200).split(b'\r\n')[0].decode(),
+      'after %.0fs' % (time.monotonic() - started))"
+queue full: HTTP/1.1 503 Service Unavailable
+wait over:  HTTP/1.1 503 Service Unavailable after 10s
 ```
 
-The empty read is the server having closed it without a word. Sending first
-gets a reset instead of an end, because closing a socket that still holds unread
-bytes is a reset rather than a clean finish. Either way the client learns at
-once, which is the point: the accept loop cannot afford to wait on a `503` it
-would have to write itself.
+The ten seconds is the part worth reading twice. A queued connection is not
+refused when its two second wait runs out, but when a worker next comes back
+for it, and here every worker was held by one of the sixteen clients in front
+until the idle deadline closed them. The wait bounds what a worker will still
+serve, not how long a connection may sit in the queue.
+
+Both refusals carry `connection: close`, which RFC 9112 §9.6 requires of a
+response that ends the connection. Both are best effort: the refusal is one
+send that never waits, so a client that is not reading gets the close without
+the status. An accept loop that waited for one client to read would become the
+queue it is trying to avoid.
+
+Neither refusal reaches the application. The access log above recorded one
+line, for the one request that was served: middleware and handlers run on a
+worker, and a refused connection never gets one.

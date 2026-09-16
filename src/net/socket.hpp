@@ -18,9 +18,9 @@ struct ReadResult {
     }
 };
 
-// Every byte or a failure, with no count either way. A short write is an obligation while it can be met; where it
-// cannot, a send deadline having fired part-way, the connection is finished and a count says nothing worth acting
-// on.
+// Every byte or a failure, with no count either way. A short send is an obligation while it can be met; where it
+// cannot, a deadline that fired part-way or a socket that would have had to wait, the connection is finished and a
+// count says nothing worth acting on.
 struct WriteResult {
     int os_error = 0;
 
@@ -64,6 +64,11 @@ public:
     // own. `limit` bounds the whole call rather than each send: a peer reading a trickle at a time renews a per-send
     // deadline forever.
     [[nodiscard]] WriteResult write(std::string_view bytes, std::chrono::milliseconds limit) noexcept;
+
+    // One send, and no waiting: MSG_DONTWAIT makes a socket that cannot take the bytes now report EAGAIN instead of
+    // blocking. For a caller that must not wait on one client, the accept thread above all. A send that placed only
+    // some of the bytes is reported as EAGAIN too: the caller is closing either way, so a count buys it nothing.
+    [[nodiscard]] WriteResult write_now(std::string_view bytes) noexcept;
 
     // A deadline on each recv, after which read() reports EAGAIN rather than waiting on. Zero on success, otherwise the
     // errno the socket refused with: a caller that cannot bound its reads needs the reason, not only the fact.

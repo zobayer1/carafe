@@ -106,6 +106,21 @@ WriteResult Socket::write(std::string_view bytes, std::chrono::milliseconds limi
     return {0};
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const)
+WriteResult Socket::write_now(std::string_view bytes) noexcept {
+    while (true) {
+        const ssize_t written = ::send(fd_, bytes.data(), bytes.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
+        if (written == -1) {
+            // EINTR is an interruption, not an outcome: ask again.
+            if (errno == EINTR) {
+                continue;
+            }
+            return {errno};
+        }
+        return {static_cast<std::size_t>(written) == bytes.size() ? 0 : EAGAIN};
+    }
+}
+
 // Not const in a plainer sense than read and write: this changes how the socket behaves from here on.
 // NOLINTNEXTLINE(readability-make-member-function-const)
 int Socket::set_receive_timeout(std::chrono::milliseconds limit) noexcept {

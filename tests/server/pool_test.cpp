@@ -38,6 +38,19 @@ using carafe::net::Socket;
 using carafe::server::ConnectionPool;
 using carafe::server::Pipeline;
 
+// Stuffs a socket until it will take nothing more, so a refusal written to it has nowhere to go.
+std::size_t fill(const Socket& sock) {
+    std::size_t total = 0;
+    const std::array<char, 4096> block{};
+    while (true) {
+        const ssize_t sent = ::send(sock.get(), block.data(), block.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
+        if (sent == -1) {
+            return total;
+        }
+        total += static_cast<std::size_t>(sent);
+    }
+}
+
 // Short enough that no test waits out a default, long enough that a handler held for a moment is not cut off under it.
 constexpr Deadlines brief{std::chrono::milliseconds(500), std::chrono::milliseconds(500)};
 
@@ -186,7 +199,7 @@ TEST(ConnectionPool, ServesNoMoreAtOnceThanItHasWorkers) {
 
 // A queue with no room left closes the connection instead of holding it, so that client hears at once rather than
 // waiting behind everything already in front of it.
-TEST(ConnectionPool, ClosesAConnectionTheQueueHasNoRoomFor) {
+TEST(ConnectionPool, AnswersAConnectionTheQueueHasNoRoomForWithFiveOhThree) {
     Gate gate;
     auto held = connected_pair();
     auto queued = connected_pair();
@@ -203,9 +216,11 @@ TEST(ConnectionPool, ClosesAConnectionTheQueueHasNoRoomFor) {
         ask(queued.first);
         pool.submit(std::move(queued.second));
 
-        // Nothing sent on this one: a peer closed with bytes it never read resets the connection instead, and end of
-        // stream is the clearer thing to assert on.
+        // Nothing sent on this one. The refusal arrives either way, but a peer closed with bytes it never read resets
+        // the connection, and a clean end of stream is the clearer second thing to assert on.
         pool.submit(std::move(refused.second));
+
+        EXPECT_EQ(status_line(answered(refused.first)), "HTTP/1.1 503 Service Unavailable");
 
         // End of stream rather than the client's own deadline: zero says closed, a timeout would say still open.
         char byte = 0;
@@ -217,7 +232,7 @@ TEST(ConnectionPool, ClosesAConnectionTheQueueHasNoRoomFor) {
 
 // A connection that sat in the queue longer than anyone is likely to still be waiting for is dropped rather than
 // served: the worker that finally reaches it would otherwise spend itself on a client that has gone.
-TEST(ConnectionPool, DropsAConnectionThatWaitedTooLongForAWorker) {
+TEST(ConnectionPool, AnswersAConnectionThatWaitedTooLongWithFiveOhThree) {
     Gate gate;
     auto held = connected_pair();
     auto stale = connected_pair();
@@ -234,8 +249,9 @@ TEST(ConnectionPool, DropsAConnectionThatWaitedTooLongForAWorker) {
         std::this_thread::sleep_for(std::chrono::milliseconds(150));
         gate.release();
 
-        // Read while the pool is still up, so what closes this is the queue deadline and not the pool shutting down.
-        EXPECT_TRUE(answered(stale.first).empty()) << "the stale connection was served after all";
+        // Read while the pool is still up, so what ends this is the queue deadline and not the pool shutting down. The
+        // handler never ran, which is what tells a 503 here apart from a response the route produced.
+        EXPECT_EQ(status_line(answered(stale.first)), "HTTP/1.1 503 Service Unavailable");
     }
 
     EXPECT_EQ(status_line(answered(held.first)), "HTTP/1.1 200 OK");
@@ -308,6 +324,61 @@ TEST(ConnectionPool, ServesConnectionsWithTheDeadlinesItWasGiven) {
 
     EXPECT_EQ(status_line(response), "HTTP/1.1 408 Request Timeout");
     EXPECT_LT(took, std::chrono::seconds(2));
+}
+
+// RFC 9112 §9.6: a response that ends the connection says so, or a client cannot tell a deliberate end from a reply
+// that was cut short.
+TEST(ConnectionPool, SaysTheConnectionIsClosingOnARefusal) {
+    Gate gate;
+    auto held = connected_pair();
+    auto queued = connected_pair();
+    auto refused = connected_pair();
+
+    {
+        ConnectionPool pool{routing(gate.handler()), PoolLimits{1, 1, std::chrono::seconds(5)}, brief};
+        ask(held.first);
+        pool.submit(std::move(held.second));
+        ASSERT_TRUE(gate.wait_until_inside(1));
+        ask(queued.first);
+        pool.submit(std::move(queued.second));
+        pool.submit(std::move(refused.second));
+
+        const std::string response = answered(refused.first);
+
+        EXPECT_NE(response.find("\r\nconnection: close\r\n"), std::string::npos) << response;
+        EXPECT_NE(response.find("503 Service Unavailable\n"), std::string::npos) << response;
+
+        gate.release();
+    }
+}
+
+// The refusal is written on the accept thread, so it must never wait for the client to read. A socket with no room left
+// is the case that would hang an accept loop, and refusing has to cost it nothing.
+TEST(ConnectionPool, DoesNotWaitOnAClientThatIsNotReadingWhenItRefuses) {
+    Gate gate;
+    auto held = connected_pair();
+    auto queued = connected_pair();
+    auto refused = connected_pair();
+
+    {
+        ConnectionPool pool{routing(gate.handler()), PoolLimits{1, 1, std::chrono::seconds(5)}, brief};
+        ask(held.first);
+        pool.submit(std::move(held.second));
+        ASSERT_TRUE(gate.wait_until_inside(1));
+        ask(queued.first);
+        pool.submit(std::move(queued.second));
+
+        // The far end of this one never reads, and it is stuffed full before it is handed over.
+        EXPECT_GT(fill(refused.second), 0U);
+
+        const auto started = std::chrono::steady_clock::now();
+        pool.submit(std::move(refused.second));
+        const auto took = std::chrono::steady_clock::now() - started;
+
+        EXPECT_LT(took, std::chrono::milliseconds(250)) << "submit waited on a client that was not reading";
+
+        gate.release();
+    }
 }
 
 }  // namespace

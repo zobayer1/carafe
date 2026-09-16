@@ -155,6 +155,7 @@ TEST(StatusMessage, NamesEveryStatusCarafeSends) {
     EXPECT_EQ(status_message(431), "Request Header Fields Too Large");
     EXPECT_EQ(status_message(500), "Internal Server Error");
     EXPECT_EQ(status_message(501), "Not Implemented");
+    EXPECT_EQ(status_message(503), "Service Unavailable");
     EXPECT_EQ(status_message(505), "HTTP Version Not Supported");
 }
 
