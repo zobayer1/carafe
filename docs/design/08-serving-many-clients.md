@@ -293,6 +293,40 @@ is a `500` long before the worker sees it. The assertion that matters is the
 second connection, served normally afterwards, which is the worker having
 outlived the failure rather than the connection having survived it.
 
-One exposure of the same kind remains. The accept thread allocates when it
-queues a connection, and a failure there still ends the process. It wants the
-same treatment and a way to aim a failure at it, which is a commit of its own.
+## The same failure on the thread that accepts
+
+One exposure of that kind was left open: `submit` runs on the accept thread,
+and queueing a connection allocates. How often was worth measuring rather than
+assuming. A `std::deque` allocates its map and one node when it is built, and
+after that grows a node only every thirty-two entries for a sixteen-byte queue
+entry, which is what a descriptor and a timestamp come to. So a push allocates
+rarely, and a default queue five hundred and twelve deep crosses that boundary
+sixteen times while it fills. Rare, and aimed at the one thread whose death is
+the whole server: `run` reports through `RunError` and has no channel for an
+exception, so a `bad_alloc` from the accept loop would leave it for `main`.
+
+The catch goes in `submit` rather than in the accept loop. Its contract
+already covers refusing and closing, every caller gets the same protection
+rather than only `serve_forever`, and a test can then hold a pool directly
+instead of standing up a listener and a thread that never returns.
+
+What it answers with took more care than the catch itself. Moving the
+connection into the queue entry as one expression destroys the socket along
+with the entry that could not be built, and the client gets the bare close the
+commit before this one existed to remove. So the entry goes in empty, the
+socket moves into it afterwards through an assignment that cannot throw, and a
+failure leaves the connection still owned and still answerable. The `503`
+costs nothing that could fail a second time: `refusal_` was serialized when
+the pool was built, and `write_now` neither allocates nor waits. The lock ends
+where the `try` does, since holding the pool's one mutex across a send is
+contention every worker pays for.
+
+Testing it meant failing an allocation that only happens every so often, and a
+test that guessed which push crosses a node boundary would be testing the
+container. The device reports whether an armed failure was delivered, so the
+test arms one before each `submit` and stops at the first that fires, and says
+so plainly if none ever does. A pool with no workers leaves the test thread as
+the only one allocating, so the failure it arranges cannot be taken by a
+worker instead. The assertion is the `503` read back from the connection that
+could not be queued. That the test returns at all is the other half, since an
+exception out of `submit` is an exception out of the accept loop.

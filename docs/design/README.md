@@ -106,6 +106,7 @@ Threads, the accept loop that must outlive its failures, and the bounded pool.
 - [One handler that throws was every client](08-serving-many-clients.md#one-handler-that-throws-was-every-client)
 - [Refusing costs a send that cannot wait](08-serving-many-clients.md#refusing-costs-a-send-that-cannot-wait)
 - [The last exception a worker can meet](08-serving-many-clients.md#the-last-exception-a-worker-can-meet)
+- [The same failure on the thread that accepts](08-serving-many-clients.md#the-same-failure-on-the-thread-that-accepts)
 
 ## [09 Deadlines](09-deadlines.md)
 

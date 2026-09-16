@@ -50,13 +50,23 @@ ConnectionPool::~ConnectionPool() {
 }
 
 void ConnectionPool::submit(net::Socket client) {
-    {
+    try {
+        // The lock ends where the try does, and both end where queueing does. The refusal below is a send, and
+        // the accept thread holding the pool's one mutex across a send is contention every worker pays for.
         const std::unique_lock<std::mutex> lock(mutex_);
         if (!stopping_ && queue_.size() < limits_.queued) {
-            queue_.push_back({std::move(client), std::chrono::steady_clock::now()});
+            // The node is made before the connection goes into it. A push that fails takes only the node, so the
+            // socket is still ours and the client still learns why.
+            queue_.push_back({net::Socket{-1}, std::chrono::steady_clock::now()});
+            queue_.back().client = std::move(client);
             ready_.notify_one();
             return;
         }
+    } catch (...) {
+        // The queue could not grow. Answering costs nothing that could fail again: refusal_ was serialized at
+        // construction and write_now neither allocates nor waits.
+        static_cast<void>(client.write_now(refusal_));
+        return;
     }
 
     // Refused. Say so if the socket takes it now, and close either way: the parameter still owns it.

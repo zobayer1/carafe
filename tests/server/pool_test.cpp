@@ -51,12 +51,18 @@ namespace {
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 std::atomic<std::size_t> fail_allocation_of_at_least{0};
 
+// Set when an armed failure is delivered. A test that has to fail whichever allocation a call happens to make needs to
+// know whether the call made one at all, or it asserts nothing on the day the call stops allocating.
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+std::atomic<bool> allocation_failed{false};
+
 }  // namespace
 
 void* operator new(std::size_t size) {
     const std::size_t threshold = fail_allocation_of_at_least.load(std::memory_order_relaxed);
     if (threshold != 0 && size >= threshold) {
         fail_allocation_of_at_least.store(0, std::memory_order_relaxed);
+        allocation_failed.store(true, std::memory_order_relaxed);
         throw std::bad_alloc{};
     }
 
@@ -108,7 +114,12 @@ std::size_t fill(const Socket& sock) {
 #ifndef CARAFE_TEST_WITHOUT_ALLOCATION_FAILURE
 
 void fail_next_allocation_of_at_least(std::size_t size) {
+    allocation_failed.store(false, std::memory_order_relaxed);
     fail_allocation_of_at_least.store(size, std::memory_order_relaxed);
+}
+
+bool an_allocation_failed() {
+    return allocation_failed.load(std::memory_order_relaxed);
 }
 
 void stop_failing_allocations() {
@@ -489,6 +500,45 @@ TEST(ConnectionPool, KeepsTheWorkerAfterAFailureInsideAConnection) {
 
         EXPECT_EQ(status_line(answered(served.first)), "HTTP/1.1 200 OK") << "the worker did not outlive the failure";
     }
+#endif
+}
+
+TEST(ConnectionPool, AnswersAConnectionTheQueueCannotGrowForWithFiveOhThree) {
+#ifdef CARAFE_TEST_WITHOUT_ALLOCATION_FAILURE
+    GTEST_SKIP() << "no allocation failure can be arranged in a sanitizer build";
+#else
+    // No workers, so the test thread is the only one allocating and nothing drains the queue while it fills: the
+    // allocation that fails is then one queueing asked for and cannot be some worker's. The pool takes the limits it
+    // is given; App is where a pool that would serve nobody is refused.
+    const PoolLimits unserved{0, 64, std::chrono::seconds(5)};
+
+    // Built before anything is armed, since building them allocates too. One per queue slot because a deque grows a
+    // node every so many entries rather than on every push, and which push that falls on is the container's business
+    // rather than this test's.
+    std::vector<std::pair<Socket, Socket>> clients;
+    clients.reserve(unserved.queued);
+    for (std::size_t i = 0; i < unserved.queued; i++) {
+        clients.push_back(connected_pair());
+    }
+
+    ConnectionPool pool{routing(echo()), unserved, brief};
+
+    std::size_t refused = clients.size();
+    for (std::size_t i = 0; i < clients.size(); i++) {
+        fail_next_allocation_of_at_least(1);
+        pool.submit(std::move(clients[i].second));
+
+        const bool failed = an_allocation_failed();
+        stop_failing_allocations();
+        if (failed) {
+            refused = i;
+            break;
+        }
+    }
+
+    // Reaching here at all is half the assertion: an exception out of submit is an exception out of the accept loop.
+    ASSERT_LT(refused, clients.size()) << "queueing never allocated, so nothing here reached the catch";
+    EXPECT_EQ(status_line(answered(clients[refused].first)), "HTTP/1.1 503 Service Unavailable");
 #endif
 }
 
