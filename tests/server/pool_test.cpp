@@ -14,8 +14,10 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -25,6 +27,58 @@
 #include <gtest/gtest.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+
+// A sanitizer build brings its own allocator and checks that each allocation is released through the operator that
+// matches it. Replacing operator new here would break that pairing, since gtest takes the nothrow form, and it would
+// blunt the same checking for the library. So the device below is left out of those builds, and the one test that
+// needs it skips.
+#ifdef __SANITIZE_ADDRESS__
+#define CARAFE_TEST_WITHOUT_ALLOCATION_FAILURE 1
+#endif
+#ifdef __has_feature
+#if __has_feature(address_sanitizer)
+#define CARAFE_TEST_WITHOUT_ALLOCATION_FAILURE 1
+#endif
+#endif
+
+#ifndef CARAFE_TEST_WITHOUT_ALLOCATION_FAILURE
+
+namespace {
+
+// Zero disarms. Armed, the next allocation at or above this size fails once, and only that one. Replacing operator new
+// reaches every test in this binary, which is why it does nothing until a test asks for a failure and why it disarms
+// itself the moment it delivers one.
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+std::atomic<std::size_t> fail_allocation_of_at_least{0};
+
+}  // namespace
+
+void* operator new(std::size_t size) {
+    const std::size_t threshold = fail_allocation_of_at_least.load(std::memory_order_relaxed);
+    if (threshold != 0 && size >= threshold) {
+        fail_allocation_of_at_least.store(0, std::memory_order_relaxed);
+        throw std::bad_alloc{};
+    }
+
+    // NOLINTNEXTLINE(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory)
+    void* memory = std::malloc(size);
+    if (memory == nullptr) {
+        throw std::bad_alloc{};
+    }
+    return memory;
+}
+
+void operator delete(void* memory) noexcept {
+    // NOLINTNEXTLINE(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory)
+    std::free(memory);
+}
+
+void operator delete(void* memory, std::size_t /*size*/) noexcept {
+    // NOLINTNEXTLINE(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory)
+    std::free(memory);
+}
+
+#endif  // CARAFE_TEST_WITHOUT_ALLOCATION_FAILURE
 
 namespace {
 
@@ -50,6 +104,30 @@ std::size_t fill(const Socket& sock) {
         total += static_cast<std::size_t>(sent);
     }
 }
+
+#ifndef CARAFE_TEST_WITHOUT_ALLOCATION_FAILURE
+
+void fail_next_allocation_of_at_least(std::size_t size) {
+    fail_allocation_of_at_least.store(size, std::memory_order_relaxed);
+}
+
+void stop_failing_allocations() {
+    fail_allocation_of_at_least.store(0, std::memory_order_relaxed);
+}
+
+// Sends what the socket takes and stops without complaint when the far end goes: a connection dropped part way through
+// a body is what one test here arranges on purpose.
+void send_until_closed(const Socket& sock, std::string_view bytes) {
+    while (!bytes.empty()) {
+        const ssize_t sent = ::send(sock.get(), bytes.data(), bytes.size(), MSG_NOSIGNAL);
+        if (sent == -1) {
+            return;
+        }
+        bytes.remove_prefix(static_cast<std::size_t>(sent));
+    }
+}
+
+#endif  // CARAFE_TEST_WITHOUT_ALLOCATION_FAILURE
 
 // Short enough that no test waits out a default, long enough that a handler held for a moment is not cut off under it.
 constexpr Deadlines brief{std::chrono::milliseconds(500), std::chrono::milliseconds(500)};
@@ -379,6 +457,39 @@ TEST(ConnectionPool, DoesNotWaitOnAClientThatIsNotReadingWhenItRefuses) {
 
         gate.release();
     }
+}
+
+// The failure a test can aim at the library rather than at the caller: the reader's buffer growing past the armed size
+// while it takes in a body. A handler that throws is a 500 long before the worker would see it, so nothing above the
+// reader can stand in for this. What the catch is for is the second half: the worker is still there afterwards.
+TEST(ConnectionPool, KeepsTheWorkerAfterAFailureInsideAConnection) {
+#ifdef CARAFE_TEST_WITHOUT_ALLOCATION_FAILURE
+    GTEST_SKIP() << "no allocation failure can be arranged in a sanitizer build";
+#else
+    // Built before arming, so the test's own large allocation is not the one that fails.
+    const std::string body(512UL * 1024, 'x');
+    const std::string request =
+        "GET / HTTP/1.1\r\nHost: example.test\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
+
+    auto failing = connected_pair();
+    auto served = connected_pair();
+
+    {
+        ConnectionPool pool{routing(echo()), roomy, brief};
+
+        fail_next_allocation_of_at_least(256UL * 1024);
+        pool.submit(std::move(failing.second));
+        send_until_closed(failing.first, request);
+
+        EXPECT_TRUE(answered(failing.first).empty()) << "the connection whose read failed was answered anyway";
+        stop_failing_allocations();
+
+        ask(served.first);
+        pool.submit(std::move(served.second));
+
+        EXPECT_EQ(status_line(answered(served.first)), "HTTP/1.1 200 OK") << "the worker did not outlive the failure";
+    }
+#endif
 }
 
 }  // namespace

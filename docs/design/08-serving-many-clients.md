@@ -255,3 +255,44 @@ No `Retry-After`. RFC 9110 §15.6.4 allows it, and the pool has no idea when a
 worker frees up: `queue_wait` bounds how long a queued connection may wait,
 not how long this refused one should stay away. A number made up to fill the
 field would be worse than the field's absence.
+
+## The last exception a worker can meet
+
+A handler that throws became a `500` two commits ago, and everything else on a
+worker's path is this library: the reader taking in a head and a body,
+routing, serialising a response, writing it. An allocation failure in any of
+them left the worker's function, and an exception leaving a thread's function
+calls `std::terminate`. One `bad_alloc` in the wrong place ended the process,
+which is exactly the outage a throwing handler used to cause.
+
+The worker now wraps the whole of one connection, building it included, and
+drops it on anything that escapes. There is nothing to answer with: composing
+a response allocates too, and the failure at hand was an allocation. So the
+connection closes, the worker takes the next, and the process keeps serving
+everyone else. That is the entire ambition.
+
+This was left out of the earlier commit as untestable, which was true of
+everything tried at the time and not true in general. A test can replace
+global `operator new` for the test binary and arm it to fail exactly one
+allocation at or above a chosen size, disarming itself the moment it fires.
+Inert until armed, it changes nothing for the other tests.
+
+A sanitizer build is the exception. It installs an allocator of its own and
+checks that every allocation is released through the operator that matches it,
+and gtest takes the `nothrow` form of `operator new` before the first test
+runs. Replacing only the ordinary form breaks that pairing, and replacing the
+whole family would blunt the same checking for the library, which is what the
+build is for. So the device is compiled out there and the test skips, which
+leaves the sanitizers looking at the library rather than at a device the tests
+brought with them.
+
+The failure is aimed at the reader, growing its buffer while it takes in a
+body. That is the one allocation a test can provoke which sits outside every
+catch already in place: a handler cannot stand in, because a handler's throw
+is a `500` long before the worker sees it. The assertion that matters is the
+second connection, served normally afterwards, which is the worker having
+outlived the failure rather than the connection having survived it.
+
+One exposure of the same kind remains. The accept thread allocates when it
+queues a connection, and a failure there still ends the process. It wants the
+same treatment and a way to aim a failure at it, which is a commit of its own.

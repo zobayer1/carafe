@@ -83,8 +83,16 @@ void ConnectionPool::work() {
             continue;
         }
 
-        Connection conn{std::move(job->client), deadlines_};
-        serve_connection(conn, *pipeline_);
+        try {
+            Connection conn{std::move(job->client), deadlines_};
+            serve_connection(conn, *pipeline_);
+        } catch (...) {
+            // Last resort, and what reaches here is the library failing rather than the caller: a handler that throws
+            // is already a 500. There is nothing to answer with, since answering allocates too, so this connection is
+            // dropped and the worker takes the next. Keeping the worker is the point: an exception leaving it takes
+            // the process with it.
+            continue;
+        }
     }
 }
 
